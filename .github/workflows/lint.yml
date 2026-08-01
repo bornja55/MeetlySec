@@ -1,0 +1,46 @@
+name: Lint
+
+# รันแค่ lint/syntax check เท่านั้น (ไม่มี test จริงในตอนนี้ — ดู task.md) ไม่ต้องใช้ secret ใดๆ
+# เลย (GOOGLE_API_KEY ไม่จำเป็นสำหรับ lint) ปลอดภัยสำหรับ private repo
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install lint tools
+        run: pip install ruff detect-secrets
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Syntax check (py_compile) — backend
+        run: python -m py_compile backend/main.py backend/auth.py backend/rag.py
+
+      - name: Syntax check (py_compile) — rag_worker
+        run: |
+          python -m py_compile \
+            rag_worker/main.py \
+            rag_worker/worker_config.py \
+            rag_worker/worker_state.py \
+            rag_worker/worker_prompts.py \
+            rag_worker/worker_parsing.py \
+            rag_worker/worker_retrieval.py \
+            rag_worker/worker_handlers.py \
+            rag_worker/llm_fallback.py \
+            rag_worker/confidential_rag.py \
+            rag_worker/build_confidential_index.py
+
+      - name: Secret scan against baseline
+        run: detect-secrets scan --baseline .secrets.baseline

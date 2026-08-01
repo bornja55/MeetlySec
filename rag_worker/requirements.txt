@@ -1,0 +1,26 @@
+# Com Sec RAG Worker — โปรเซสแยกต่างหาก (ดู main.py docstring สำหรับเหตุผลสถาปัตยกรรม)
+# ตัด streamlit/pandas/openpyxl/docx2txt ออกจาก requirements.txt ต้นฉบับของ Local RAG เพราะ
+# ไม่ใช้ (ไม่มี UI ในโปรเซสนี้ ไม่มี document-conversion tooling — Local RAG มีของตัวเองแยกอยู่แล้ว)
+
+# -- HTTP layer --
+fastapi
+uvicorn[standard]
+
+# -- RAG framework (LlamaIndex) — เวอร์ชันต้องตรงกับที่ build ดัชนีของ Local RAG ไว้ --
+llama-index-core
+llama-index-embeddings-huggingface
+llama-index-vector-stores-faiss
+llama-index-llms-google-genai
+
+# -- Embedding / reranker models + vector search engine --
+# torch: wheel เริ่มต้นจาก PyPI เป็น CPU-only ตามที่ตัดสินใจไว้ (RAG stack รัน CPU-only เสมอ
+# สงวน VRAM 4GB ทั้งหมดให้ Module 2 — ห้ามติดตั้ง torch แบบ CUDA ให้ worker นี้โดยเด็ดขาด)
+torch
+sentence-transformers
+faiss-cpu==1.14.2
+
+# -- Gemini API client --
+google-genai
+
+# -- Validation --
+pydantic

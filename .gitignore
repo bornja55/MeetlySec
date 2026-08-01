@@ -1,0 +1,60 @@
+# ── Secrets — ห้าม commit เด็ดขาด ─────────────────────────────────────────────
+.env
+*.env
+!*.env.example
+**/rag_worker.log
+rag_worker_com_sec.log
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+venv/
+.venv/
+env/
+
+# ── ข้อมูลลับระดับบอร์ด — ห้าม commit เด็ดขาด (task.md Module 1) ────────────────
+# BOD Minutes ที่ approve แล้ว + ดัชนี FAISS ที่ build จากมัน (ดู rag_worker/confidential_rag.py)
+rag_worker/confidential_corpus/*
+!rag_worker/confidential_corpus/README.md
+rag_worker/confidential_storage/
+
+# ── ไฟล์เสียง/วิดีโอต้นฉบับจากการประชุม (Module 2) — ข้อมูลลับ ไม่ commit ─────────
+*.wav
+*.mp3
+*.m4a
+*.mov
+*.mp4
+*.webm
+uploads/
+recordings/
+
+# ── Model checkpoints / weights ขนาดใหญ่ (ไม่ใช่ source code) ────────────────
+*.ckpt
+*.pt
+*.bin
+*.safetensors
+models/
+
+# ── Repo อ้างอิงที่โคลนมา (มี .git ของตัวเองอยู่แล้ว — ดู provenance table ใน ──────
+# handoff.md ข้อ 4.5 สำหรับ commit hash ต้นทาง) ไม่ต้องการให้ Com Sec repo หลัก
+# track เนื้อหาข้างในซ้ำ/พัน nested-git — ใช้เป็นเอกสารอ้างอิงอย่างเดียว
+/meetily/
+/typhoon-asr/
+/typhoon2-audio/
+/Diarization_ThaiSpeech_2022/
+
+# ── OS / editor ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ── Node (เผื่อ frontend Module 6 ในอนาคต) ────────────────────────────────────
+node_modules/
+.next/
+dist/
+build/

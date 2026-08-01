@@ -1,0 +1,52 @@
+# Pre-commit hooks — Com Sec AI System
+#
+# ใช้ pre-commit framework (Python-native) ไม่ใช่ Husky เพราะโปรเจกต์นี้เป็น Python
+# (backend/ + rag_worker/) — Husky เหมาะกับโปรเจกต์ JS/Node (Module 6 frontend ยังไม่เริ่ม
+# ถ้าเริ่มแล้วค่อยพิจารณาเพิ่ม hook ฝั่ง JS แยกต่างหาก)
+#
+# ติดตั้งครั้งแรก (บนเครื่อง Windows จริง):
+#   pip install pre-commit
+#   pre-commit install
+#
+# รันด้วยมือ (เช็คทั้ง repo โดยไม่ต้อง commit):
+#   pre-commit run --all-files
+
+repos:
+  # ── กัน secret หลุดเข้า git (สำคัญที่สุด — GOOGLE_API_KEY, JWT signing key ในอนาคต) ──
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: |
+          (?x)^(
+            .*/venv/.*|
+            rag_worker/confidential_corpus/.*
+          )$
+
+  # ── ตรวจพื้นฐาน (ไฟล์ใหญ่เกิน, private key หลุด, merge conflict ค้าง ฯลฯ) ──────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=2000"]
+        # เพดาน 2MB กันไฟล์เสียง/วิดีโอ/model checkpoint หลุดเข้ามาโดยไม่ตั้งใจ
+        # (ไฟล์พวกนี้ควรถูก .gitignore กันไว้อยู่แล้ว — hook นี้เป็นด่านสุดท้าย)
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+      - id: mixed-line-ending
+
+  # ── Lint (Python) ──────────────────────────────────────────────────────────
+  # ตั้งใจไม่ lint ไฟล์ที่ copy มาจาก Local RAG แบบไม่แก้เลย (worker_state/prompts/parsing/
+  # retrieval/handlers.py, llm_fallback.py) — auto-fix จะทำให้ diff กับต้นฉบับที่พิสูจน์แล้ว
+  # (39 unit test + 11 E2E) เพี้ยนไปโดยไม่จำเป็น เช็คเฉพาะไฟล์ใหม่/ที่ปรับเอง
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^(backend/.*\.py|rag_worker/(main|worker_config|confidential_rag|build_confidential_index)\.py)$

@@ -1,0 +1,18 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+python-docx
+azure-identity
+msal
+pyjwt
+httpx
+
+# หมายเหตุ (2026-08-01, Module 1 — ดู handoff.md ข้อ 3.0):
+# - ตัด `instructor` ออก — Module 3 ใช้ Gemini native structured output (`response_schema`) แทน
+#   ตามการตัดสินใจ ไม่ใช้ library นี้เลย (ดู implementation_plan.md ข้อ Decisions #7)
+# - ตัด `sentence-transformers` ออกจาก backend หลัก — torch/faiss/sentence-transformers อยู่ใน
+#   rag_worker/requirements.txt (โปรเซสแยก) เท่านั้น backend หลักนี้เป็นแค่ HTTP client (`httpx`)
+#   ไปหา worker ไม่โหลดโมเดลเองเลย (กัน Windows WINHTTP.dll crash — ดู rag_worker/main.py)
+# - เพิ่ม `pyjwt` — สำหรับ decode JWT จริงตอนเชื่อม Azure AD จริง (ปัจจุบัน auth.py ยังเป็น mock
+#   token string อยู่ ดู task.md Module 1 — ยังไม่ได้ implement)

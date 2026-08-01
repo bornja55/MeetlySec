@@ -1,0 +1,37 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+# ตั้งใจไม่ lint ไฟล์ที่ copy มาจาก Local RAG แบบไม่แก้เลย (ดู .pre-commit-config.yaml
+# สำหรับเหตุผลเดียวกัน) — เผื่อกรณีรัน `ruff check .` ตรงๆ โดยไม่ผ่าน pre-commit
+exclude = [
+    "venv",
+    ".venv",
+    "rag_worker/worker_state.py",
+    "rag_worker/worker_prompts.py",
+    "rag_worker/worker_parsing.py",
+    "rag_worker/worker_retrieval.py",
+    "rag_worker/worker_handlers.py",
+    "rag_worker/llm_fallback.py",
+    "meetily",
+    "typhoon-asr",
+    "typhoon2-audio",
+    "Diarization_ThaiSpeech_2022",
+]
+
+[tool.ruff.lint]
+# เลือก rule set ชัดเจนแทนพึ่ง default (ruff default กว้างเกินไปสำหรับโปรเจกต์นี้ ลอง run แล้วเจอ
+# noise เยอะที่ไม่ใช่บั๊กจริง — บันทึกเหตุผลการปิดแต่ละตัวไว้ด้านล่าง):
+#   E, F   — pyflakes/pycodestyle มาตรฐาน (error จริง เช่น unused import, undefined name)
+#   I      — isort (จัดเรียง import ให้อ่านง่าย)
+#   UP     — pyupgrade (syntax สมัยใหม่ เช่น dict[str,Any] แทน typing.Dict)
+select = ["E", "F", "I", "UP"]
+ignore = [
+    "E501",  # line too long — docstring/comment ภาษาไทยยาวกว่าอังกฤษตามธรรมชาติของภาษา
+]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's `Depends(...)` ใน argument default เป็น idiom มาตรฐานของ framework นี้ (ไม่ใช่บั๊ก
+# B008 ที่ ruff เตือน) — ไม่ได้เปิด flake8-bugbear (B) ไว้ใน select ด้านบนอยู่แล้ว ระบุ per-file
+# ไว้เผื่ออนาคตเปิด B เพิ่ม จะได้ไม่ลืมยกเว้นจุดนี้
+"backend/main.py" = ["B008"]
+"backend/auth.py" = ["B008"]
