@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Com Sec AI - Create Meeting</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Montserrat:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="logo">Com Sec AI</div>
+    <div class="header-actions">
+      <select class="role-select">
+        <option>Com Sec Maker</option>
+        <option>Com Sec Checker</option>
+        <option>Board Member</option>
+        <option>Admin</option>
+      </select>
+      <a href="index.html" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="panel" style="max-width: 800px; margin: 0 auto;">
+      <div class="panel-header">
+        <h2>Create New Meeting</h2>
+      </div>
+
+      <form id="create-meeting-form">
+        <div class="grid-2 mb-4">
+          <div class="form-group">
+            <label>Meeting Number</label>
+            <input type="text" id="meeting-number" placeholder="e.g. 16/2569">
+          </div>
+          <div class="form-group">
+            <label>Date</label>
+            <input type="date" id="meeting-date">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Participants</label>
+          <div id="participants-container">
+            <div class="grid-2 mb-4 participant-row">
+              <input type="text" class="participant-name" placeholder="Name">
+              <div style="display: flex; gap: 1rem;">
+                <input type="text" class="participant-position" placeholder="Position" style="flex: 1;">
+                <button type="button" class="btn btn-secondary remove-row-btn" style="color: var(--status-failed); border-color: var(--status-failed);">Remove</button>
+              </div>
+            </div>
+          </div>
+          <button type="button" id="add-participant-btn" class="btn btn-secondary">+ Add Participant</button>
+        </div>
+
+        <div class="form-group mt-4">
+          <label>Meeting Agenda</label>
+          <div id="agenda-container">
+            <div class="agenda-row" style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+              <input type="text" class="agenda-item" placeholder="Agenda item" style="flex: 1;">
+              <button type="button" class="btn btn-secondary remove-row-btn" style="color: var(--status-failed); border-color: var(--status-failed);">Remove</button>
+            </div>
+          </div>
+          <button type="button" id="add-agenda-btn" class="btn btn-secondary">+ Add Agenda</button>
+        </div>
+
+        <p id="form-error" style="color: var(--status-failed);"></p>
+
+        <div class="text-right mt-4" style="border-top: 1px solid var(--secondary-cyan-deep); padding-top: 1.5rem;">
+          <a href="index.html" class="btn btn-secondary" style="margin-right: 1rem;">Cancel</a>
+          <button type="submit" class="btn btn-primary">Save Meeting</button>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

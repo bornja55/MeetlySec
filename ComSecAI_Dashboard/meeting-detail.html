@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Com Sec AI - Meeting Detail</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Montserrat:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="header">
+    <div class="logo">Com Sec AI</div>
+    <div class="header-actions">
+      <select class="role-select">
+        <option>Com Sec Maker</option>
+        <option>Com Sec Checker</option>
+        <option>Board Member</option>
+        <option>Admin</option>
+      </select>
+      <a href="index.html" class="btn btn-secondary">Back to Dashboard</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="flex-between mb-4">
+      <div>
+        <h2 style="display: inline-block; margin-right: 1rem;">
+          <span id="meeting-title">Loading...</span>
+          <span id="meeting-date" style="color: var(--text-muted); font-size: 1rem; font-weight: normal;"></span>
+        </h2>
+        <span id="meeting-status-badge" style="vertical-align: super;"></span>
+      </div>
+      <button id="export-transcript-btn" class="btn btn-secondary">Export Transcript</button>
+    </div>
+
+    <!-- Read-only Summary -->
+    <div class="panel">
+      <div class="grid-2">
+        <div>
+          <h4>Participants</h4>
+          <ul id="participants-list" style="color: var(--text-muted); padding-left: 1.2rem;"></ul>
+        </div>
+        <div>
+          <h4>Agenda</h4>
+          <ul id="agenda-list" style="color: var(--text-muted); padding-left: 1.2rem;"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- แสดงเมื่อยังไม่มี transcript (draft/uploaded/processing/failed) แทน 2 panel หลัก -->
+    <div id="status-placeholder" class="panel text-muted" style="display: none;"></div>
+
+    <!-- Main Content — แสดงเฉพาะตอน status = transcribed (คุม display ผ่าน app.js) -->
+    <div id="main-content-grid" class="grid-2" style="display: none;">
+      <!-- Speaker Mapping Panel -->
+      <div class="panel" style="align-self: start;">
+        <div class="panel-header">
+          <h3>Speaker Mapping</h3>
+        </div>
+        <div id="mapping-container"></div>
+      </div>
+
+      <!-- Transcript Panel -->
+      <div class="panel">
+        <div class="panel-header flex-between">
+          <h3>Meeting Transcript</h3>
+          <button id="edit-transcript-btn" class="btn btn-secondary">Edit</button>
+        </div>
+        <div id="transcript-container" style="max-height: 500px; overflow-y: auto; padding-right: 1rem;"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

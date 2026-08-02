@@ -71,17 +71,39 @@ app = FastAPI(title="Com Sec RAG Worker", version="1.0.0")
 
 def _load_everything() -> None:
     """โหลดโมเดล/ดัชนีทั่วไปทั้งหมด (บล็อกประมาณ 4 นาทีรอบแรก) รันใน background thread —
-    พอร์ตมาจาก rag_worker.py เดิมของ Local RAG ตรงๆ ไม่แก้ logic แค่ต่างจุดที่โหลด storage
-    (ชี้ผ่าน worker_config.STORAGE_DIR ที่ตอนนี้ชี้ไปที่ Local RAG's storage/ แทน)"""
+    พอร์ตมาจาก rag_worker.py เดิมของ Local RAG แต่**ต่างจากต้นฉบับ 2 จุดตั้งใจ**:
+    (1) ชี้ storage ไปที่ Local RAG's storage/ (config.STORAGE_DIR)
+    (2) ใช้ GPU ถ้ามี (ดูหมายเหตุ device/dtype ด้านล่าง — เปลี่ยนจากแผนเดิม CPU-only)
+
+    หมายเหตุสำคัญ (2026-08-02, พบจาก debug-mantra + scrutinize จริงบนเครื่อง): เดิมโค้ดนี้
+    (เหมือนต้นฉบับ Local RAG ทุกประการ) ใช้ `torch_dtype=torch.float16` แต่รันบน **CPU** เสมอ
+    (ไม่เคยระบุ device เลย) — วัดจริงพบว่า rerank 60 candidate ใช้เวลา **553s** ด้วย fp16 บน CPU
+    เทียบกับ **32s** ด้วย fp32 บน CPU เครื่องเดียวกัน (เร็วขึ้น 17 เท่า) เพราะ CPU ส่วนใหญ่ไม่มี
+    native fp16 support จริง ต้อง emulate ช้ามาก — Local RAG's venv ใช้ torch 2.5.1+cu121
+    (build เก่ากว่า) ที่บังเอิญไม่เจอปัญหานี้หนักเท่า Com Sec's venv ที่ใช้ torch 2.13.0
+
+    **ตัดสินใจใหม่ (2026-08-02, แทนที่การตัดสินใจเดิมใน task.md/PRD.md "CPU-only เสมอ")**:
+    ใช้ GPU จริงถ้ามี (`torch.cuda.is_available()`) พร้อม fp16 (เหมาะกับ GPU tensor core จริง)
+    ถ้าไม่มี GPU fallback เป็น CPU + **fp32** (ไม่ใช้ fp16 บน CPU อีกต่อไป กัน regression แบบนี้
+    ซ้ำ) — **ผลที่ตามมาที่ต้องจับตา**: ตอนนี้ RAG worker จะแย่ง VRAM กับ Module 2
+    (Diarization+ASR) ที่ยังไม่ได้สร้าง — ต้องกลับมาออกแบบ GPU Lock ให้ครอบคลุม RAG worker
+    ด้วย ไม่ใช่แค่ Diarization/ASR เหมือนแผนเดิม (ดู task.md/handoff.md ที่อัปเดตพร้อมกันนี้)"""
     try:
-        log("เริ่มโหลด embedding model (BGE-M3)...")
         import torch
+
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        _dtype = torch.float16 if _device == "cuda" else torch.float32
+        log(f"ใช้ device={_device}, dtype={_dtype} "
+            f"({'พบ GPU: ' + torch.cuda.get_device_name(0) if _device == 'cuda' else 'ไม่พบ GPU ใช้ CPU + fp32'})")
+
+        log("เริ่มโหลด embedding model (BGE-M3)...")
         from llama_index.core import Settings
         from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
         embed_model = HuggingFaceEmbedding(
             model_name=config.BGE_M3_PATH,
-            model_kwargs={"torch_dtype": torch.float16, "use_safetensors": True},
+            device=_device,
+            model_kwargs={"torch_dtype": _dtype, "use_safetensors": True},
         )
         embed_model.get_text_embedding("warmup")
         log("Embedding model พร้อมแล้ว")
@@ -105,7 +127,8 @@ def _load_everything() -> None:
                 super().__init__(**kwargs)
                 self._model = CrossEncoder(
                     self.model_name,
-                    model_kwargs={"torch_dtype": torch.float16, "use_safetensors": True},
+                    device=_device,
+                    model_kwargs={"torch_dtype": _dtype, "use_safetensors": True},
                 )
                 self._model.predict([["warmup", "test"]])
 

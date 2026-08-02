@@ -26,7 +26,14 @@ jobs:
         run: ruff check .
 
       - name: Syntax check (py_compile) — backend
-        run: python -m py_compile backend/main.py backend/auth.py backend/rag.py
+        run: |
+          python -m py_compile \
+            backend/main.py \
+            backend/auth.py \
+            backend/rag.py \
+            backend/audio.py \
+            backend/db.py \
+            backend/models.py
 
       - name: Syntax check (py_compile) — rag_worker
         run: |
@@ -41,6 +48,23 @@ jobs:
             rag_worker/llm_fallback.py \
             rag_worker/confidential_rag.py \
             rag_worker/build_confidential_index.py
+
+      - name: Syntax check (py_compile) — audio_worker (Module 2, เพิ่มเข้ามาทีหลัง เคยลืมอัปเดต CI)
+        run: |
+          python -m py_compile \
+            audio_worker/main.py \
+            audio_worker/pipeline.py \
+            audio_worker/asr.py \
+            audio_worker/diarization.py \
+            audio_worker/ffmpeg_utils.py \
+            audio_worker/gpu_utils.py \
+            audio_worker/worker_config.py
+
+      - name: Syntax check (node --check) — ComSecAI_Dashboard frontend (Module 6)
+        run: |
+          if [ -f ComSecAI_Dashboard/app.js ]; then
+            node --check ComSecAI_Dashboard/app.js
+          fi
 
       - name: Secret scan against baseline
         run: detect-secrets scan --baseline .secrets.baseline

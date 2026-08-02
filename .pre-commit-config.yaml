@@ -1,8 +1,9 @@
 # Pre-commit hooks — Com Sec AI System
 #
-# ใช้ pre-commit framework (Python-native) ไม่ใช่ Husky เพราะโปรเจกต์นี้เป็น Python
-# (backend/ + rag_worker/) — Husky เหมาะกับโปรเจกต์ JS/Node (Module 6 frontend ยังไม่เริ่ม
-# ถ้าเริ่มแล้วค่อยพิจารณาเพิ่ม hook ฝั่ง JS แยกต่างหาก)
+# ใช้ pre-commit framework (Python-native) ไม่ใช่ Husky เพราะโปรเจกต์นี้เป็น Python เป็นหลัก
+# (backend/ + rag_worker/ + audio_worker/) — Module 6 frontend (ComSecAI_Dashboard/) เริ่มแล้ว
+# แต่เป็น static HTML/CSS/JS ไม่มี build step เลยยังไม่จำเป็นต้องมี Husky/npm hook แยก
+# (CI ฝั่ง .github/workflows/lint.yml มี node --check app.js คุม syntax เบื้องต้นแล้ว)
 #
 # ติดตั้งครั้งแรก (บนเครื่อง Windows จริง):
 #   pip install pre-commit
@@ -43,10 +44,11 @@ repos:
   # ── Lint (Python) ──────────────────────────────────────────────────────────
   # ตั้งใจไม่ lint ไฟล์ที่ copy มาจาก Local RAG แบบไม่แก้เลย (worker_state/prompts/parsing/
   # retrieval/handlers.py, llm_fallback.py) — auto-fix จะทำให้ diff กับต้นฉบับที่พิสูจน์แล้ว
-  # (39 unit test + 11 E2E) เพี้ยนไปโดยไม่จำเป็น เช็คเฉพาะไฟล์ใหม่/ที่ปรับเอง
+  # (39 unit test + 11 E2E) เพี้ยนไปโดยไม่จำเป็น เช็คเฉพาะไฟล์ใหม่/ที่ปรับเอง — เพิ่ม audio_worker/
+  # เข้ามาด้วยแล้ว (Module 2, ทั้งโฟลเดอร์เป็นโค้ดใหม่ที่เขียนเอง ไม่ใช่ copy จากที่ไหน)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.6
     hooks:
       - id: ruff
         args: ["--fix"]
-        files: ^(backend/.*\.py|rag_worker/(main|worker_config|confidential_rag|build_confidential_index)\.py)$
+        files: ^(backend/.*\.py|rag_worker/(main|worker_config|confidential_rag|build_confidential_index)\.py|audio_worker/.*\.py)$

@@ -1,0 +1,27 @@
+# Com Sec Audio Worker (Module 2) — โปรเซสแยกต่างหากจาก backend หลัก เหตุผลเดียวกับ rag_worker
+# (กัน Windows WINHTTP.dll crash จากรวม torch เข้าโปรเซสเดียวกับ web layer — ดู worker_config.py)
+
+# -- HTTP layer --
+fastapi
+uvicorn[standard]
+
+# -- ASR --
+nemo-toolkit==2.4.0
+
+# -- Diarization --
+pyannote.audio==3.3.2
+speechbrain==1.0.3
+
+# -- torch: ต้องเป็น CUDA build ไม่ใช่ CPU-only wheel เริ่มต้นจาก PyPI ------------------------
+# บั๊กที่เจอจริงตอนวัด VRAM (`diagnose_vram_module2.py`, 2026-08-02): `pip install torch==2.8.0`
+# เฉยๆ ได้ CPU-only wheel เงียบๆ (torch.cuda.is_available() == False โดยไม่มี error ให้เห็น) —
+# ต้องติดตั้งด้วยคำสั่งนี้แทน (cu121/cu124 ไม่มี wheel ของ 2.8.0 — ต้อง cu126 ขึ้นไป):
+#   pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu126
+# เช็คหลังติดตั้งเสมอ: python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# ต้องได้ "2.8.0+cu126 True" — ถ้าได้ False ห้ามรัน worker นี้ต่อ (จะตกไปที่ CPU+fp32 fallback
+# อัตโนมัติตาม pipeline.py แต่ช้ากว่ามาก ไม่ใช่พฤติกรรมที่ตั้งใจ)
+torch==2.8.0
+torchaudio==2.8.0
+torchvision==0.23.0
+
+pydantic

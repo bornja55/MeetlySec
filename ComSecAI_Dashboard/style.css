@@ -1,0 +1,247 @@
+:root {
+  /* Colors */
+  --bg-color: #0F282A;
+  --surface-color: #1C3936;
+  --primary-gold: #D9B168;
+  --primary-gold-hover: #F3DE8F;
+  --primary-gold-deep: #AA843D;
+  --secondary-cyan: #ACD8D9;
+  --secondary-cyan-deep: #123B3A;
+  --text-main: #FFFFFF;
+  --text-muted: #A0B0B0;
+  
+  /* Status Colors */
+  --status-draft: #6c757d;
+  --status-uploaded: #ACD8D9;
+  --status-processing: #D9B168;
+  --status-transcribed: #AA843D;
+  --status-failed: #dc3545;
+  --status-success: #28a745;
+  --status-warning: #ffc107;
+  
+  /* Radii */
+  --radius: 8px;
+  
+  /* Fonts */
+  --font-heading: 'Montserrat', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background-color: var(--bg-color);
+  color: var(--text-main);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+  margin-top: 0;
+}
+
+a {
+  color: var(--secondary-cyan);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Header */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 2rem;
+  background-color: var(--surface-color);
+  border-bottom: 1px solid var(--secondary-cyan-deep);
+}
+
+.logo {
+  font-family: var(--font-heading);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-gold);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.role-select {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  border: 1px solid var(--secondary-cyan);
+  padding: 0.5rem;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+}
+
+/* Buttons */
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background-color: var(--primary-gold);
+  color: #000;
+}
+.btn-primary:hover {
+  background-color: var(--primary-gold-hover);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--secondary-cyan);
+  border: 1px solid var(--secondary-cyan);
+}
+.btn-secondary:hover {
+  background-color: var(--secondary-cyan-deep);
+}
+
+/* Container */
+.container {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Badges */
+.badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 50px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  display: inline-block;
+}
+.badge-draft { background-color: var(--status-draft); color: #fff; }
+.badge-uploaded { background-color: var(--status-uploaded); color: #000; }
+.badge-processing { background-color: var(--status-processing); color: #000; }
+.badge-transcribed { background-color: var(--status-transcribed); color: #000; }
+.badge-failed { background-color: var(--status-failed); color: #fff; }
+.badge-success { background-color: var(--status-success); color: #fff; }
+.badge-warning { background-color: var(--status-warning); color: #000; }
+
+/* Tables */
+.table-container {
+  background-color: var(--surface-color);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  padding: 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--secondary-cyan-deep);
+}
+
+th {
+  font-family: var(--font-heading);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+tbody tr:hover {
+  background-color: rgba(172, 216, 217, 0.05);
+}
+
+/* Forms */
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+input[type="text"],
+input[type="date"],
+textarea {
+  width: 100%;
+  padding: 0.75rem;
+  background-color: var(--bg-color);
+  border: 1px solid var(--secondary-cyan-deep);
+  color: var(--text-main);
+  border-radius: var(--radius);
+  font-family: var(--font-body);
+  box-sizing: border-box;
+}
+
+/* เพิ่มสำหรับ Edit Transcript (ไม่ได้อยู่ใน mockup เดิมจาก Stitch) */
+textarea {
+  resize: vertical;
+  font-size: 0.85rem;
+}
+.transcript-edit-row {
+  margin-bottom: 1rem;
+}
+.transcript-edit-row .edit-meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+.transcript-edit-row .edit-meta .speaker-name {
+  margin-right: 0.5rem;
+}
+
+input:focus {
+  outline: none;
+  border-color: var(--primary-gold);
+}
+
+/* Panels */
+.panel {
+  background-color: var(--surface-color);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.panel-header {
+  border-bottom: 1px solid var(--secondary-cyan-deep);
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 1.5rem;
+}
+
+/* Transcript */
+.transcript-line {
+  margin-bottom: 1rem;
+}
+.speaker-name {
+  font-weight: 600;
+  color: var(--primary-gold);
+}
+.speaker-time {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin: 0 0.5rem;
+}
+
+/* Utils */
+.text-muted { color: var(--text-muted); }
+.text-right { text-align: right; }
+.mb-4 { margin-bottom: 1rem; }
+.mt-4 { margin-top: 1rem; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }

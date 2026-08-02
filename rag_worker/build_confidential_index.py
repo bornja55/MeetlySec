@@ -57,10 +57,15 @@ def main() -> None:
     from llama_index.embeddings.huggingface import HuggingFaceEmbedding
     from llama_index.vector_stores.faiss import FaissVectorStore
 
-    print("กำลังโหลด Embedding Model (BAAI/bge-m3)...")
+    # device/dtype เดียวกับ main.py (ดู main.py's _load_everything docstring 2026-08-02 —
+    # fp16 บน CPU ช้ากว่า fp32 ถึง 17 เท่าจากการวัดจริง ใช้ GPU+fp16 ถ้ามี ไม่งั้น CPU+fp32)
+    _device = "cuda" if torch.cuda.is_available() else "cpu"
+    _dtype = torch.float16 if _device == "cuda" else torch.float32
+    print(f"กำลังโหลด Embedding Model (BAAI/bge-m3) — device={_device}, dtype={_dtype}...")
     embed_model = HuggingFaceEmbedding(
         model_name=config.BGE_M3_PATH,
-        model_kwargs={"torch_dtype": torch.float16, "use_safetensors": True},
+        device=_device,
+        model_kwargs={"torch_dtype": _dtype, "use_safetensors": True},
     )
     Settings.embed_model = embed_model
     Settings.chunk_size = 400

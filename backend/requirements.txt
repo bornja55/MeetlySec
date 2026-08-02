@@ -7,6 +7,8 @@ azure-identity
 msal
 pyjwt
 httpx
+sqlalchemy
+python-multipart
 
 # หมายเหตุ (2026-08-01, Module 1 — ดู handoff.md ข้อ 3.0):
 # - ตัด `instructor` ออก — Module 3 ใช้ Gemini native structured output (`response_schema`) แทน
@@ -16,3 +18,10 @@ httpx
 #   ไปหา worker ไม่โหลดโมเดลเองเลย (กัน Windows WINHTTP.dll crash — ดู rag_worker/main.py)
 # - เพิ่ม `pyjwt` — สำหรับ decode JWT จริงตอนเชื่อม Azure AD จริง (ปัจจุบัน auth.py ยังเป็น mock
 #   token string อยู่ ดู task.md Module 1 — ยังไม่ได้ implement)
+#
+# หมายเหตุ (2026-08-02, Module 2 — Meeting entity persistence):
+# - เพิ่ม `sqlalchemy` — ตัดสินใจร่วมกับผู้ใช้แล้ว: SQLite + SQLAlchemy ORM (ไม่ใช้ sqlite3 ดิบ/JSON
+#   file) เพราะต้องมี foreign key จริงระหว่าง Meeting/attendees/agenda และจะขยายอีกตอน Module 3-5
+#   (Minutes, Approval workflow, audit trail) — ดู backend/db.py/models.py
+# - เพิ่ม `python-multipart` — FastAPI ต้องการ dependency นี้เพื่อ parse multipart file upload
+#   (endpoint /api/meetings/{id}/upload)

@@ -15,7 +15,25 @@ import os
 import httpx
 
 RAG_WORKER_BASE_URL = os.environ.get("RAG_WORKER_BASE_URL", "http://127.0.0.1:8766")
-RAG_WORKER_TIMEOUT_SECONDS = float(os.environ.get("RAG_WORKER_TIMEOUT_SECONDS", "60"))
+
+# บั๊กจริงที่พบ 2026-08-01 (live test ครั้งแรก): เดิม default 60s สั้นเกินไป — worker เจอ
+# {"detail":"RAG worker ตอบช้าเกิน 60.0s"} ทั้งที่ worker เองยัง process อยู่ (ดู log
+# "[CHAT session=...] ถาม: ..." ที่ยังทำงานต่อหลัง client ตัดการเชื่อมต่อไปแล้ว)
+#
+# นี่คือบั๊ก class เดียวกับที่ Local RAG's HANDOFF.md (ADR-003) เคยพบและแก้มาก่อนแล้ว: client
+# timeout ต้องคำนวณจาก worst-case ของทั้ง retry+fallback chain ฝั่ง worker ไม่ใช่เดาตัวเลขสั้นๆ
+# worker เอง (worker_config.py) มี GEMINI_REQUEST_TIMEOUT_MS default 300000ms (5 นาที) ต่อการเรียก
+# 1 ครั้ง, primary model retry ได้ถึง 3 ครั้ง (มี backoff 10s/20s ระหว่างรอบ), แล้วยังมี fallback
+# model ต่อได้อีกหลายตัว (ดู .env.example: GEMINI_MODEL_CHAT_FALLBACK)
+#
+# อัปเดต (2026-08-01, หลัง live test จริงครั้งที่ 2): 600s (ตัวเลขแรกที่ตั้งไว้) ยังสั้นไป —
+# log จริงจาก worker แสดง "สำเร็จใน 1005.03s (โมเดล: gemini-3.1-flash-lite)" คือสำเร็จที่ primary
+# model เองเลย (ไม่ใช่ fallback) แปลว่า 1 รอบ retry loop (สูงสุด 3 attempt บนโมเดลเดียวกัน + backoff
+# 10s/20s ถ้าเป็น quota error) ใช้เวลารวมเกิน 1000s จริง — ตั้ง default กว้างขึ้นอีกเป็น 1800s (30
+# นาที) กันไว้ก่อน แต่ตัวเลข ~1000s ต่อ query เดียวสูงผิดปกติสำหรับโมเดล "lite" ควรตรวจสอบ network
+# path ไปยัง generativelanguage.googleapis.com ต่อ (proxy/VPN/firewall การันตี DPI ที่อาจหน่วง
+# TLS handshake) แยกต่างหาก ไม่ใช่แค่ยืดเวลา timeout ไปเรื่อยๆ
+RAG_WORKER_TIMEOUT_SECONDS = float(os.environ.get("RAG_WORKER_TIMEOUT_SECONDS", "1800"))
 
 
 class RAGWorkerError(Exception):

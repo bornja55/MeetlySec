@@ -5,6 +5,16 @@
 **/rag_worker.log
 rag_worker_com_sec.log
 
+# ── Log ไฟล์ทุกตัว (runtime output ล้วนๆ ไม่ใช่ source code, เพิ่มตอน commit
+# Module 2 audio_worker — เจอ audio_worker/audio_worker.log ค้างอยู่) ───────────
+*.log
+
+# ── Database ไฟล์ local (SQLite, MVP — schema สร้างจาก create_all() ใหม่ได้เสมอ
+# ไม่ต้อง track ข้อมูล test ใน git — เจอ backend/com_sec.db ค้างอยู่) ─────────────
+*.db
+*.sqlite
+*.sqlite3
+
 # ── Python ────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

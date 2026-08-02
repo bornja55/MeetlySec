@@ -13,8 +13,16 @@ llama-index-vector-stores-faiss
 llama-index-llms-google-genai
 
 # -- Embedding / reranker models + vector search engine --
-# torch: wheel เริ่มต้นจาก PyPI เป็น CPU-only ตามที่ตัดสินใจไว้ (RAG stack รัน CPU-only เสมอ
-# สงวน VRAM 4GB ทั้งหมดให้ Module 2 — ห้ามติดตั้ง torch แบบ CUDA ให้ worker นี้โดยเด็ดขาด)
+# torch: อัปเดต 2026-08-02 — เปลี่ยนจากแผนเดิม "CPU-only เสมอ" (ดู task.md/handoff.md/PRD.md
+# สำหรับเหตุผลเต็ม) เป็น **ใช้ GPU ถ้ามี** เพราะวัดจริงพบว่า reranker รันบน CPU + fp16 ช้ากว่า
+# ปกติมาก (553s ต่อ 60 candidate) — main.py's _load_everything() detect GPU อัตโนมัติเองแล้ว
+# (torch.cuda.is_available()) ถ้าไม่มี GPU จะ fallback เป็น CPU+fp32 ให้เอง (ไม่ใช้ fp16 บน CPU
+# อีกต่อไป กัน regression เดิม) แต่**ต้องติดตั้ง torch แบบ CUDA เอง** (pip ธรรมดาจาก PyPI ได้แค่
+# CPU-only wheel) รันคำสั่งนี้แทน `pip install torch` เฉยๆ (เวอร์ชัน/CUDA index เดียวกับที่
+# Local RAG's venv ใช้อยู่แล้วบนเครื่องนี้ ยืนยันแล้วว่าใช้ได้จริง):
+#   pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+# ⚠️ ผลที่ตามมา: RAG worker นี้จะแย่ง VRAM กับ Module 2 (Diarization+ASR) ที่ยังไม่ได้สร้าง —
+# ต้องออกแบบ GPU Lock ให้ครอบคลุมทั้งสองระบบตอนสร้าง Module 2 (ดู task.md)
 torch
 sentence-transformers
 faiss-cpu==1.14.2
