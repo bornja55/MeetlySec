@@ -10,6 +10,27 @@ httpx
 sqlalchemy
 python-multipart
 
+# Module 3 (Minutes Generation): เรียก Gemini native structured output ตรงๆ จากโปรเซสนี้ (ไม่ใช่
+# ผ่าน llama_index เหมือน rag_worker — ดู minutes_generation.py หัวไฟล์สำหรับเหตุผล) เบาพอที่จะอยู่
+# ในโปรเซส backend หลักได้เลย ไม่มี torch/faiss/native extension ที่จะชน Windows WINHTTP.dll
+google-genai
+
+# Module 4 (Word Template Mapping, 2026-08-03): render minutes_json ลง templates/minutes_template.docx
+# ที่มี Jinja tag ฝังอยู่ (ดู build_minutes_template.py/docx_generation.py) — เบา ไม่มี native
+# extension เช่นกัน (pure Python, ใช้ python-docx ที่มีอยู่แล้วเป็น dependency ภายใน)
+docxtpl
+
+# Module 5 (Finalization & Secure Delivery, 2026-08-03):
+# - docx2pdf: แปลง .docx → PDF ผ่าน Microsoft Word (COM automation, ต้องมี Word ติดตั้งจริงบนเครื่อง
+#   Windows ที่รัน backend — ยืนยันกับผู้ใช้แล้วว่ามี Word ติดตั้งอยู่) **ใช้งานได้เฉพาะ Windows +
+#   ต้องมี Word เท่านั้น** sandbox นี้ไม่มีทั้งคู่ verify ได้แค่ py_compile/pyflakes เหมือนโค้ดที่พึ่ง
+#   GPU/เบราว์เซอร์ก่อนหน้านี้ทุกครั้ง — ผู้ใช้ต้อง live test บนเครื่องจริงก่อนถือว่าใช้งานได้
+# - pypdf: ใส่รหัสผ่าน PDF (pure Python, ไม่ต้องพึ่ง qpdf binary ภายนอกเหมือน pikepdf — เลือกทางนี้
+#   เพื่อลด external dependency ที่ต้องติดตั้งแยกบนเครื่อง Windows)
+# - ไม่เพิ่ม dependency สำหรับส่งอีเมล — ใช้ `smtplib`/`email` มาตรฐานของ Python (ดู email_service.py)
+docx2pdf; sys_platform == "win32"
+pypdf
+
 # หมายเหตุ (2026-08-01, Module 1 — ดู handoff.md ข้อ 3.0):
 # - ตัด `instructor` ออก — Module 3 ใช้ Gemini native structured output (`response_schema`) แทน
 #   ตามการตัดสินใจ ไม่ใช้ library นี้เลย (ดู implementation_plan.md ข้อ Decisions #7)
@@ -25,3 +46,10 @@ python-multipart
 #   (Minutes, Approval workflow, audit trail) — ดู backend/db.py/models.py
 # - เพิ่ม `python-multipart` — FastAPI ต้องการ dependency นี้เพื่อ parse multipart file upload
 #   (endpoint /api/meetings/{id}/upload)
+#
+# หมายเหตุ (2026-08-03, Module 3 — Minutes Generation):
+# - เพิ่ม `google-genai` (ดูด้านบน)
+# - พบบั๊กจริงจาก mantra 4 (cross-reference): `python-dotenv` อยู่ในรายการนี้มาตั้งแต่ Module 1
+#   แต่ไม่มีจุดไหนในโค้ดเรียก `load_dotenv()` เลยสักครั้ง — `backend/.env` ไม่เคยถูกโหลดจริง (ไม่กระทบ
+#   อะไรมาก่อนหน้านี้เพราะยังไม่มีโค้ดอ่าน env var จาก `.env` — Azure AD ยัง mock อยู่) แก้แล้วด้วยการ
+#   เพิ่ม `backend/config.py` (โมดูลใหม่ เรียก `load_dotenv()` รวมศูนย์ที่เดียว) ดู config.py หัวไฟล์
