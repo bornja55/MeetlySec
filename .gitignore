@@ -32,6 +32,19 @@ rag_worker/confidential_corpus/*
 !rag_worker/confidential_corpus/README.md
 rag_worker/confidential_storage/
 
+# ── Minutes ที่ generate/approve แล้ว (Module 4-5, ดู backend/docx_generation.py's
+# GENERATED_DOCS_DIR) — .docx/.pdf ฉบับร่าง+ฉบับสมบูรณ์ของ BOD Minutes จริง ห้าม commit เหมือน
+# confidential_corpus ด้านบน (พบจาก /scrutinize 2026-08-04 — โฟลเดอร์นี้ไม่เคยมี rule มาก่อนเลย) ─────
+backend/generated_docs/*
+
+# ── ไฟล์ทดลอง/tuning artifact (Module 1-2, ดู experiments/) — ผลทดลอง Gemini native audio +
+# ข้อมูลเตรียม diarization tuning ย้ายมารวมไว้ที่เดียว (2026-08-04, พบจาก /scrutinize ว่าไฟล์พวกนี้
+# กระจัดกระจายอยู่ใน backend/ กับ audio_worker/ แถมมีบางไฟล์เป็น transcript ประชุมจริงที่ไม่เคยถูก
+# ignore มาก่อน) — เก็บ .example.csv ไว้ (เป็น template เปล่า ไม่มีข้อมูลจริง ปลอดภัย commit ได้ เหมือน
+# .env.example ด้านบน) ไฟล์เสียง (.wav) ในนี้ถูกกันซ้ำอีกชั้นด้วย *.wav ด้านล่างอยู่แล้ว
+experiments/*
+!experiments/*.example.csv
+
 # ── ไฟล์เสียง/วิดีโอต้นฉบับจากการประชุม (Module 2) — ข้อมูลลับ ไม่ commit ─────────
 *.wav
 *.mp3

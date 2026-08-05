@@ -154,6 +154,7 @@ backend\start_backend.bat
 - 📂 `rag_worker/` — ค้นหานโยบายบริษัท (แยกดัชนีทั่วไป vs. ดัชนีลับระดับบอร์ด)
 - 📂 `audio_worker/` — ถอดเสียงประชุม + แยกผู้พูด
 - 📂 `ComSecAI_Dashboard/` — หน้าเว็บ (static HTML/CSS/JS)
+- 📂 `experiments/` — ไฟล์ทดลอง/tuning artifact ทั้งหมด (ผลทดลอง Gemini native audio, ข้อมูลเตรียม tune diarization) — ไม่ commit เข้า git (ดู `.gitignore`) ยกเว้นไฟล์ `.example.csv` ที่เป็น template เปล่า
 - 📄 `handoff.md` — บันทึกความคืบหน้าโปรเจกต์แบบละเอียดทุกเซสชัน (สำหรับคนที่มาสานต่องาน)
 - 📄 `task.md` — เช็กลิสต์ความคืบหน้ารายโมดูล
 - 📄 `PRD.md` — เอกสารความต้องการโปรเจกต์ฉบับเต็ม
