@@ -89,6 +89,33 @@ ASR_MAX_SEGMENT_SECONDS = int(os.environ.get("ASR_MAX_SEGMENT_SECONDS", "20"))
 # เหมือนเดิมพอ
 ASR_MIN_SEGMENT_SECONDS = float(os.environ.get("ASR_MIN_SEGMENT_SECONDS", "0.1"))
 
+# ── Diarization clustering (2026-08-03, ทดลองแก้ปัญหา over-segmentation) ────────────────
+# `diarization.py`'s hyperparameter เดิมทั้งชุดเป็นค่ากลางๆที่ยังไม่ tune จริง (ดู warning หัวไฟล์
+# นั้น) — พบจากการทดสอบจริงบนไฟล์ประชุมยาวว่า `min_cluster_size=1` เดิมทำให้ได้ 38 speaker label
+# จากคนพูดจริงไม่กี่คน (embedding เดียวก็ถูกนับเป็น speaker ใหม่แยกได้เลย ไม่ต้องมีหลักฐานซ้ำก่อน) —
+# ขยับ default ขึ้นเป็น 5 เป็น**การทดลองแบบสมเหตุสมผล ไม่ใช่ tune แบบวัดผลจริงเทียบ ground truth**
+# (ยังเป็น TODO แยกต่างหาก) ต้องดูผลจริงหลัง reprocess ไฟล์เดิมว่าจำนวน speaker ลดลงใกล้เคียงจำนวน
+# ผู้เข้าร่วมจริงไหม ปรับขึ้น/ลงต่อได้ผ่าน env นี้โดยไม่ต้องแก้โค้ด
+DIARIZATION_MIN_CLUSTER_SIZE = int(os.environ.get("DIARIZATION_MIN_CLUSTER_SIZE", "5"))
+
+# อัปเดต (2026-08-03 ต่อ, live test จริง): ขยับ min_cluster_size 1→5 ลด speaker จาก 38→33 เท่านั้น —
+# อ่านซอร์สจริงของ pyannote.audio 3.3.2 (`pipelines/clustering.py::AgglomerativeClustering.cluster()`)
+# แล้วพบว่า min_cluster_size **ไม่ได้กำหนดจำนวน cluster หลัก** แค่เอา cluster เล็ก (สมาชิกน้อยกว่า
+# ค่านี้) ไปควบรวมกับ cluster ใหญ่ที่ใกล้ที่สุดทีหลัง — ตัวที่กำหนดจำนวน cluster ใหญ่จริงๆคือ
+# `clustering.threshold` ผ่าน `scipy.fcluster(dendrogram, threshold, criterion="distance")` (ยิ่งสูง
+# ยิ่งยอมให้ embedding ที่ต่างกันมากขึ้นถูกนับเป็น cluster เดียวกัน → speaker น้อยลง) — เพิ่มเป็น
+# env-configurable เช่นกัน ขยับ default จาก 0.7 (เดิม) → 1.0 เป็นการทดลองต่อ (ช่วงค่าที่ใช้ได้คือ
+# [0.0, 2.0] ตาม docstring ของ AgglomerativeClustering — สมมติ unit-normalized cosine embeddings)
+#
+# อัปเดต (2026-08-03 ต่อ อีกรอบ, live test threshold=1.0 จริง /scrutinize พบ): ลด speaker จาก 33→2
+# ได้จริง แต่ **overshoot** — ตรวจ transcript ที่ได้พบว่า SPEAKER_00 (458/473 บรรทัด) มีคำลงท้าย
+# เพศชาย ("ครับ"/"ฮะ", พบ 62 ครั้ง) ปนกับเพศหญิง ("ค่ะ"/"คะ", พบ 99 ครั้ง) สลับกันไปตลอดทั้งไฟล์ —
+# ในภาษาไทยคำลงท้ายพวกนี้บ่งบอกเพศผู้พูดแม่นยำมาก จึงสรุปได้ว่า threshold=1.0 รวมคนพูดจริงอย่างน้อย
+# 2 คน (เช่น ประธานที่ประชุม (ครับ) + เลขาที่อ่านวาระ (ค่ะ)) เข้าเป็น speaker เดียวกันผิด — คือ
+# under-segmentation แทนที่ over-segmentation แบบเดิม ลดกลับมาเป็นค่ากลางระหว่าง 0.7 กับ 1.0
+# (0.85) เพื่อทดลองหาจุดสมดุลต่อ — ยังไม่ใช่ tune จริงเทียบ ground truth เหมือนเดิม (TODO เดิม)
+DIARIZATION_CLUSTERING_THRESHOLD = float(os.environ.get("DIARIZATION_CLUSTERING_THRESHOLD", "0.85"))
+
 # ── GPU lock / fallback ──────────────────────────────────────────────────────────────
 # ห้ามมี diarization model กับ ASR model อยู่บน VRAM พร้อมกันเด็ดขาด (ตัดสินใจ Module 2 เดิม) —
 # โหลด→รัน→ปล่อย ทีละตัวตามลำดับใน pipeline.py เท่านั้น ค่านี้คือ fallback ถ้า VRAM ไม่พอจริง

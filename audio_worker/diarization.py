@@ -14,7 +14,11 @@ repo ต้นฉบับเคยทำ) ไม่งั้นความแ�
 import os
 
 import torch
-from worker_config import DIARIZATION_CHECKPOINT_DIR
+from worker_config import (
+    DIARIZATION_CHECKPOINT_DIR,
+    DIARIZATION_CLUSTERING_THRESHOLD,
+    DIARIZATION_MIN_CLUSTER_SIZE,
+)
 
 
 def _find_checkpoint() -> str:
@@ -26,10 +30,13 @@ def _find_checkpoint() -> str:
     return os.path.join(DIARIZATION_CHECKPOINT_DIR, ckpts[0])
 
 
-def load_pipeline(device: str):
-    """โหลด fine-tuned segmentation model + ประกอบเป็น SpeakerDiarization pipeline บน device
-    ที่ระบุ (เรียกครั้งเดียวต่อ 1 งาน แล้ว release ด้วย unload_pipeline() ก่อนโหลด ASR ต่อ — ห้าม
-    มี diarization+ASR ค้างบน VRAM พร้อมกัน ดู pipeline.py)"""
+def build_pipeline(device: str):
+    """โหลด fine-tuned segmentation model + ประกอบเป็น SpeakerDiarization pipeline **แบบยังไม่
+    instantiate hyperparameter** (`pipeline.instantiate()` ยังไม่ถูกเรียก) — แยกออกมาจาก
+    `load_pipeline()` (2026-08-03, ระหว่างสร้าง `tune_diarization.py`) เพื่อให้ script tuning เอา
+    pipeline ตัวเดียวกัน (โหลด checkpoint เดียวกันเป๊ะ) ไปค้นหา hyperparameter ด้วย
+    `pyannote.pipeline.Optimizer` ได้ตรงๆ โดยไม่ fix ค่าจาก env ให้ล่วงหน้า — ดู
+    `load_pipeline()` ด้านล่างสำหรับ path การใช้งานจริง (fix ค่าจาก env ตามปกติ)"""
     from pyannote.audio import Model
     from pyannote.audio.pipelines import SpeakerDiarization
 
@@ -45,12 +52,41 @@ def load_pipeline(device: str):
         segmentation=finetuned,
         embedding="speechbrain/spkrec-ecapa-voxceleb",
     )
-    # ค่ากลางๆ ยังไม่ tune — ดู warning ที่หัวไฟล์
+    pipeline.to(torch.device(device))
+    return pipeline
+
+
+def load_pipeline(device: str):
+    """โหลด pipeline (ผ่าน `build_pipeline()`) แล้ว instantiate hyperparameter จากค่า env จริง —
+    ใช้ path นี้สำหรับประมวลผลไฟล์จริงเสมอ (เรียกครั้งเดียวต่อ 1 งาน แล้ว release ก่อนโหลด ASR ต่อ —
+    ห้ามมี diarization+ASR ค้างบน VRAM พร้อมกัน ดู pipeline.py)"""
+    pipeline = build_pipeline(device)
+    # ค่ากลางๆ ยังไม่ tune ด้วยมือ — ดู warning ที่หัวไฟล์ — clustering.threshold/min_cluster_size
+    # ปรับเป็น env-configurable แล้ว (2026-08-03) หลังพบว่าค่าเดิม (threshold=0.7, min_cluster_size=1)
+    # ทำให้ over-segment รุนแรงบนไฟล์ประชุมจริง (38 speaker label จากคนพูดจริงไม่กี่คน) — อ่านซอร์ส
+    # จริงของ pyannote.audio 3.3.2 แล้วยืนยันว่า `threshold` (ไม่ใช่ min_cluster_size) เป็นตัวกำหนด
+    # จำนวน cluster หลักผ่าน `scipy.fcluster(..., criterion="distance")` — ลองขยับมือหลายค่า (0.7→
+    # 1.0→0.85) แล้วพบว่า**คู่ประธาน+เลขายังถูกรวมเป็นคนเดียวกันอยู่ทุกค่า**ในขณะที่ค่าอื่นๆ
+    # over/under-segment สลับกันไป — สรุปว่า manual probing ทีละค่าถึงเพดานแล้ว ต้อง joint-tune
+    # หลายพารามิเตอร์พร้อมกันเทียบ ground truth จริงด้วย `tune_diarization.py` (ใช้
+    # `pyannote.pipeline.Optimizer`) แทน — ดูผลลัพธ์ที่ได้ใน `tuned_diarization_params.yaml` (ถ้ามี
+    # ไฟล์นี้อยู่ จะโหลดมาทับค่า env ด้านล่างทั้งหมดอัตโนมัติ)
+    from worker_config import BASE_DIR
+    tuned_params_path = os.path.join(BASE_DIR, "tuned_diarization_params.yaml")
+    if os.path.exists(tuned_params_path):
+        import yaml
+        with open(tuned_params_path, encoding="utf-8") as f:
+            tuned = yaml.safe_load(f)
+        pipeline.instantiate(tuned["params"])
+        return pipeline
+
     pipeline.instantiate({
         "segmentation": {"threshold": 0.5, "min_duration_off": 0.0},
-        "clustering": {"threshold": 0.7, "method": "average", "min_cluster_size": 1},
+        "clustering": {
+            "threshold": DIARIZATION_CLUSTERING_THRESHOLD, "method": "average",
+            "min_cluster_size": DIARIZATION_MIN_CLUSTER_SIZE,
+        },
     })
-    pipeline.to(torch.device(device))
     return pipeline
 
 

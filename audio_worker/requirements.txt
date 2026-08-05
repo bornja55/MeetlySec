@@ -12,6 +12,15 @@ nemo-toolkit==2.4.0
 pyannote.audio==3.3.2
 speechbrain==1.0.3
 
+# -- Diarization hyperparameter tuning (2026-08-03, tune_diarization.py) --------------------
+# manual threshold probing (0.7→1.0→0.85) แตะเพดานแล้ว: คู่ประธาน+เลขายังถูกรวม speaker เดียวกัน
+# อยู่ทุกค่า — ต้อง joint-tune หลายพารามิเตอร์พร้อมกันเทียบ ground truth จริงด้วย
+# pyannote.pipeline.Optimizer (Optuna) แทน ดู tune_diarization.py's docstring สำหรับขั้นตอนเต็ม —
+# pyannote.metrics (ให้ GreedyDiarizationErrorRate) เป็น dependency ของ pyannote.audio อยู่แล้ว
+# ไม่ต้องเพิ่มเอง ตรวจสอบจากซอร์สจริงแล้ว (speaker_diarization.py imports จากมันตรงๆ)
+pyannote.pipeline==4.0.0
+optuna
+
 # -- torch: ต้องเป็น CUDA build ไม่ใช่ CPU-only wheel เริ่มต้นจาก PyPI ------------------------
 # บั๊กที่เจอจริงตอนวัด VRAM (`diagnose_vram_module2.py`, 2026-08-02): `pip install torch==2.8.0`
 # เฉยๆ ได้ CPU-only wheel เงียบๆ (torch.cuda.is_available() == False โดยไม่มี error ให้เห็น) —
