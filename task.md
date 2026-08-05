@@ -114,12 +114,87 @@ detection ในโค้ดของ Com Sec เองเพื่อไม่�
 - `[x]` CPU fallback: เขียนแล้ว (`audio_worker/pipeline.py::_run_diarization_stage`/`_run_asr_stage` จับ `torch.cuda.OutOfMemoryError` ตกไป `device="cpu"` อัตโนมัติ) ⚠️ ยังไม่เคย trigger จริง (ต้องมี VRAM ไม่พอจริงถึงจะทดสอบ path นี้ได้)
 - `[x]` ✅ **รัน Diarization บนไฟล์เต็มความยาวก่อน (ไม่ตัดชิ้น) แล้วตัด ASR ใหม่ทีละ diarization segment (redesign 2026-08-02, ดู handoff.md 3.3-3.4)** — เดิมตัด ASR เป็นชิ้นละ 1 ชม. คงตายตัว (`transcribe_in_chunks`) แก้เป็นตัดตาม diarization segment ตรงๆแล้ว (`audio_worker/diarization.py::run_diarization` รับไฟล์เต็มเหมือนเดิมไม่เปลี่ยน, `audio_worker/asr.py::transcribe_segments` วนทุก segment ตัดด้วย `ffmpeg_utils.extract_chunk`, sub-split ถ้ายาวเกิน `ASR_MAX_SEGMENT_SECONDS` ค่า default 20s อ้างอิง `typhoon-asr/examples/finetune.py`'s `train_ds.max_duration`) — ✅ **verify จริงบนเครื่อง Windows แล้ว**: อัปโหลด `Diarization_ThaiSpeech_2022/tests/Parliament_1m/Parliament_1m.wav` (เสียงไทยจริง 60s) ผ่านครบ end-to-end ใน 63.2s, sub-split ถูกต้องตามสูตร (segment 29.64s → 2×14.82s เป๊ะ), GPU release VRAM pattern ไม่เปลี่ยน (560MiB→115MiB หลังปล่อย ASR) — - `[x]` ✅ **แก้เสร็จสมบูรณ์แล้ว (ยืนยันด้วย live test 3 รอบ)**: segment สั้นมาก (0.3-0.5s) บางอันเคยคืน `text=""` ว่างเปล่า — **รอบ 1**: ขยับ `MIN_SEGMENT_SECONDS` (ย้ายไป `worker_config.py` เปลี่ยนชื่อเป็น `ASR_MIN_SEGMENT_SECONDS`) จาก 0.1s → 0.5s เป็น duration-heuristic — **live test ยืนยัน**: กรองได้ 3/4 แต่ segment 0.54s (ยาวกว่าเกณฑ์) ยังว่างเปล่าอยู่ดี + เสีย segment 0.37s ที่มีคำจริง ("วันนี้") ไปด้วย — พิสูจน์ว่า duration ไม่ใช่ตัวชี้วัดคุณภาพที่แม่นยำ — **รอบ 2 (ตัดสินใจสุดท้าย, ผ่าน `/scrutinize` แล้ว — APPROVE พร้อมแก้ 1 จุดที่พบ: `.env.example` ค้างค่าเก่า 0.5 แก้กลับเป็น 0.1 แล้ว)**: เปลี่ยนเป็น **filter จากผลจริงหลัง transcribe** (`asr.py`'s `transcribe_segments()` drop entry ที่ text ว่างเปล่าหลังโมเดลตอบมาแล้ว) แทน duration-heuristic — `ASR_MIN_SEGMENT_SECONDS` กลับไปเป็นแค่เกณฑ์ทางเทคนิค (0.1s) + เพิ่ม log สรุป `skipped_too_short`/`dropped_empty_text` ต่อไฟล์ไว้เทียบตอน tune hyperparameter จริง — **รอบ 3 (verify การแก้)**: อัปโหลดไฟล์เดิมซ้ำ ผลตรงตามคาด segment 0.54s ที่เคยว่างเปล่าหายไปแล้ว, segment 0.37s ("วันนี้") ที่เคยเสียไปกลับมาแล้ว, ไม่มี entry ว่างเปล่าเหลือเลยทั้ง 6 entry — **ปิดประเด็นนี้ได้** — ⚠️ **ยังไม่ได้ tune diarization hyperparameter จริง** (ต้นเหตุที่ทำให้มี segment ขยะเกิดขึ้นตั้งแต่ต้น ยังเป็น TODO แยกต่างหาก ไม่ใช่ปัญหาเร่งด่วนแล้วเพราะกรองผลปลายทางได้เรียบร้อยแล้ว) (ต้นเหตุแท้จริงที่ทำให้มี segment ขยะเกิดขึ้นตั้งแต่ต้น ยังเป็น TODO แยกต่างหาก) — ⚠️ **hyperparameter ของ diarization pipeline (`instantiate()`) เป็นค่ากลางๆที่ยังไม่ tune** (เหมือนเดิม ไม่เกี่ยวกับ redesign รอบนี้) — ค่า tune จริงจาก notebook เดิม (DER ~3.9%) ผูกกับ `pyannote.audio` 2.x API ที่ใช้กับเวอร์ชัน 3.3.2 ที่ติดตั้งจริงไม่ได้ **ต้อง tune ใหม่ก่อนใช้กับข้อมูลประชุมจริง**
 - `[x]` ✅ **แก้แล้ว (redesign 2026-08-02) — merge ASR เข้ากับ diarization segment เสร็จแล้ว**: เดิมทิ้ง TODO ไว้ว่า diarization ให้ timestamp แม่นยำระดับ segment ผู้พูดแต่ ASR ให้แค่ timestamp ระดับ chunk หยาบๆ (1 ชม./ชิ้น) ต้อง forced-alignment/heuristic มา merge ทีหลัง — **เปลี่ยนวิธีแทน**: ตัด ASR ใหม่ทีละ diarization segment ตรงๆ (segment สั้นๆหลักวินาที) ทำให้ output เป็น `{start, end, speaker, text}` ต่อ segment อยู่แล้วในตัว ไม่ต้อง align/merge อีกขั้นเลย (ผู้ใช้เลือกวิธีนี้เอง ตัดทางเลือก proportional-matching heuristic ทิ้ง) — แลกกับ transcribe เยอะครั้งขึ้นมาก — ⚠️ **สำคัญ**: `typhoon-asr/typhoon_asr_inference.py`'s ฟีเจอร์ "timestamp ต่อคำ" **ไม่ใช่ของจริงจากโมเดล** เป็นแค่ประมาณเส้นตรง (`duration/จำนวนคำ`) ยังไม่ใช้เหมือนเดิม (ดู `audio_worker/asr.py` docstring)
+- `[ ]` ⚠️ **Diarization hyperparameter ยังไม่ tune จริง — manual probing ทีละค่าแตะเพดานแล้ว
+  (2026-08-03, พบผ่าน `/scrutinize` ตอนไล่ debug คำร้องเรียน "คำพูดมันแปลกๆ" ของผู้ใช้)**: ไล่ขยับค่า
+  เดียวทีละตัวด้วยมือ 3 รอบ (`clustering.threshold`: 0.7→1.0→0.85) ได้ผลตรวจสอบจากไฟล์ transcript จริง
+  ทุกรอบ (นับ speaker label + คำลงท้ายชาย"ครับ/ฮะ"เทียบหญิง"ค่ะ/คะ" ต่อ speaker ตรงๆจากไฟล์ ไม่เดา):
+  0.7→38/33 speaker (over-segment รุนแรง), 1.0→2 speaker (under-segment: ประธาน(ชาย)+เลขา(หญิง) รวม
+  เป็นคนเดียวกัน ยืนยันจากคำลงท้าย 62 ครั้ง"ครับ/ฮะ"ปน 99 ครั้ง"ค่ะ/คะ"ใน speaker เดียว), 0.85→15
+  speaker (ปัญหาทั้งสองฝั่งพร้อมกัน: คู่ประธาน+เลขายังรวมกันอยู่เป๊ะ 57/97 ครั้ง เกือบเท่ากับตอน 1.0
+  เป๊ะ + มี speaker ปลอมเพิ่มอีก ~13 ตัวจาก over-segment กลับมา) — **สรุป**: threshold ตัวเดียวแก้ไม่ได้
+  ทั้งคู่พร้อมกัน ต้อง joint-tune หลายพารามิเตอร์เทียบ ground truth จริงแทน manual probing — ผู้ใช้เลือก
+  ทางนี้ผ่าน `AskUserQuestion` (ตัวเลือกอื่นที่ไม่เลือก: ปล่อยผ่านไป Module 3 ใช้ Speaker Mapping แก้มือ
+  ตอน review / ลองอีก 1-2 ค่าในช่วง 0.85-1.0 ต่อแบบเดิม) — **เขียนเครื่องมือ tuning เสร็จแล้ว**:
+  1. `diarization.py`'s `load_pipeline()` แยกส่วนโหลด checkpoint ออกเป็น `build_pipeline(device)`
+     (คืน pipeline **ที่ยังไม่ instantiate hyperparameter**) — `load_pipeline()` เดิมยังพฤติกรรมเหมือน
+     เดิมทุกอย่าง (เรียก `build_pipeline()` แล้ว instantiate จาก env ต่อ) แค่เพิ่มการเช็คว่ามีไฟล์
+     `tuned_diarization_params.yaml` อยู่ไหม ถ้ามีจะโหลดค่านั้นมาทับ env ทั้งหมดอัตโนมัติ
+  2. `tune_diarization.py` (ใหม่ทั้งไฟล์) — ใช้ `pyannote.pipeline.Optimizer` (Optuna ข้างใน) ค้นหา
+     พร้อมกันทั้ง 5 พารามิเตอร์ที่ประกาศเป็น tunable `Parameter` อยู่แล้วในซอร์สจริงของ pyannote.audio
+     3.3.2 (ตรวจสอบจากการดาวน์โหลด wheel มาอ่านจริง ไม่เดา): `segmentation.threshold` (0.1-0.9),
+     `segmentation.min_duration_off` (0.0-1.0), `clustering.threshold` (0.0-2.0), `clustering.method`
+     (categorical), `clustering.min_cluster_size` (1-20) — optimize เทียบ Diarization Error Rate
+     (`SpeakerDiarization.get_metric()` มี `GreedyDiarizationErrorRate` จาก `pyannote.metrics` ในตัว
+     อยู่แล้ว เป็น dependency ของ pyannote.audio เอง ไม่ต้องติดตั้งเพิ่ม — เพิ่มแค่ `pyannote.pipeline`
+     + `optuna` ใน `requirements.txt`) — ใช้ `tune_iter()` (ไม่ใช่ `tune()`) บันทึกค่าที่ดีที่สุดลง
+     `tuned_diarization_params.yaml` ทุกครั้งที่ดีขึ้น กัน progress หายถ้า Ctrl+C กลางคัน
+  3. `tuning_ground_truth.example.csv` (ใหม่) — ตัวอย่างฟอร์แมต ground truth ที่ผู้ใช้ต้องเตรียมเอง
+     (`start_sec,end_sec,speaker` — ฟังไฟล์ `audio_worker/processed/<job_id>.wav` ที่มีอยู่แล้วจริงช่วง
+     สั้นๆ 5-10 นาทีแล้วจดว่าใครพูดช่วงไหนจริง)
+  ⚠️ **ยังไม่ได้รันจริง** — สคริปต์ผ่านแค่ `py_compile`/`ast.parse` ในนี้ (ไม่มี GPU/checkpoint/
+  ground-truth จริงให้ทดสอบ) **ผู้ใช้ต้องเตรียม ground-truth CSV เองก่อน** (ต้องฟังเสียงจริง — ทำแทนไม่
+  ได้) แล้วรัน `python tune_diarization.py --audio ... --ground-truth ... --iterations 30` บนเครื่อง
+  Windows ที่มี GPU จริง — ดู docstring หัวไฟล์ `tune_diarization.py` สำหรับขั้นตอนเต็ม
+- `[ ]` ⚠️ **ทางเลือกใหม่ที่กำลังทดลองคู่ขนาน (2026-08-04)**: ผู้ใช้ลองโยนไฟล์เสียงเดียวกันเข้า
+  NotebookLM ได้ diarization/transcription แม่นกว่า pipeline เราเองมาก — ค้นแล้วพบว่า "MCP
+  notebooklm" ที่มีอยู่ทั้งหมดเป็นของ community ไม่เป็นทางการ (reverse-engineer internal API/browser
+  automation, อยู่ในเขตเทา ToS ของ Google) **ไม่แนะนำใช้ในระบบจริง** แต่ตั้งสมมติฐานว่าคุณภาพที่ดีกว่า
+  มาจาก Gemini ทำ diarization+ASR ในโมเดลเดียวจบ (audio understanding ตรงๆ) — **เขียนสคริปต์ทดลอง
+  แยกต่างหาก**: `backend/audio_transcription_experiment.py` ส่งไฟล์เสียงเข้า Gemini ตรงๆ (Files API +
+  structured output ขอ `start_seconds`/`end_seconds`/`speaker_label`/`text` ต่อ segment) — **ตรวจ
+  จากซอร์สจริงของ `google-genai==2.16.0` แล้วพบว่าห้ามใช้ `GenerateContentConfig(audio_timestamp=
+  True)`** (โยน `ValueError` ทันทีถ้าใช้ผ่าน Gemini Developer API mode ที่โปรเจกต์นี้ใช้อยู่ — รองรับ
+  เฉพาะ Vertex AI Enterprise mode เท่านั้น) ใช้วิธีขอ timestamp ผ่าน prompt+schema แทน — เพิ่ม
+  `GEMINI_MODEL_TRANSCRIPTION`/`_FALLBACK`/`GEMINI_TRANSCRIPTION_TIMEOUT_MS` ใน `config.py`/
+  `.env.example` — **Verify**: เขียน mock test 4 เคสในเซสชันนี้ (happy path, polling PROCESSING→
+  ACTIVE, ไม่มี API key, ไม่พบไฟล์) ผ่านหมด, `py_compile`/`pyflakes` สะอาด **ยังไม่เคยเรียก Gemini
+  จริงด้วยไฟล์เสียงจริง** (มีค่าใช้จ่ายจริงต่อการรัน ต้องให้ผู้ใช้รันเองบนเครื่องจริง) — ถ้าผลดีจริง
+  (diarization แม่นกว่า, ไม่ต้อง tune pyannote อีกเลย) จะพิจารณาแทนที่ `audio_worker`'s diarization+
+  ASR pipeline ทั้งชุด แต่**ยังไม่ตัดสินใจ** จนกว่าจะมีผลทดลองจริงเทียบกัน
+- `[x]` ✅ **ตัดสินใจสถาปัตยกรรมสุดท้ายจาก `/grill-me` (2026-08-04)**: ทดลองจริง 2 รอบ (10 นาที + ไฟล์
+  เต็ม 55 นาที ด้วย `gemini-3.5-flash` และ `gemini-3.6-flash`) ยืนยันว่า Gemini native audio ดีกว่า
+  pyannote+typhoon-asr มาก (speaker count สมเหตุสมผล ไม่มี fragmentation เร็วกว่า 3-4 เท่า) — grill
+  เจาะประเด็นจนครบทุกแขนงแล้ว **สรุปทิศทาง**:
+  1. **แทนที่ `audio_worker` ทั้งชุด** (ตัวเลือก A จาก 3 ตัวเลือก: แทนที่/เก็บคู่ขนาน/hybrid fallback)
+     — ตรวจ `implementation_plan.md`/`task.md` แล้วพบว่า **ไม่มีเหตุผล compliance ใดๆ** ที่บังคับให้
+     diarization/ASR ต้องรัน local เลย เหตุผลเดิมคือข้อจำกัดฮาร์ดแวร์ (GPU 4GB/6GB) ล้วนๆ ไม่ใช่การ
+     ตัดสินใจเชิงนโยบาย เก็บ pyannote ไว้เป็นทางเลือกสำรองมีต้นทุนบำรุงรักษาสูงกว่าที่เห็น (CUDA/torch/
+     nemo-toolkit/pyannote ทั้งชุด + ปัญหา diarization ที่ยังไม่จบ) จึงตัดสินใจตัดทิ้งทั้งหมด
+  2. **ย้าย Gemini call เข้า `backend/` โดยตรง** (ไม่ใช่ worker process แยก) — เพราะไม่มี torch/GPU แล้ว
+     ปัญหา WINHTTP.dll crash เดิม (สาเหตุที่ต้องแยก process) ไม่เกี่ยวข้องอีกต่อไป
+  3. **แปลง schema ที่ตัว adapter** — Gemini คืน `start_seconds`/`end_seconds`/`speaker_label` ต้อง
+     rename เป็น `start`/`end`/`speaker` ให้ตรงกับ `transcript_segments_json` เดิมทันทีตอนรับผล เพื่อไม่
+     ต้องแก้ `_extract_speaker_labels()`/speaker mapping endpoint/minutes generation/`app.js` เลย
+  4. **Paid-tier gate = documentation เท่านั้น** เหมือน Module 3 เดิม (ไม่มี code enforcement เพราะ
+     Gemini API ไม่มีทางเช็คได้ว่า key เป็น free/paid tier จริง) — สอดคล้อง pattern เดิม ไม่สร้างมาตรฐาน
+     สองระดับระหว่าง audio กับ text
+  5. **Error handling ใช้ pattern เดิมทั้งหมด** — เรียก `transcribe_audio_native()` แบบไม่ใส่ `--model`
+     override ให้ใช้ fallback chain `gemini-3.6-flash`→`gemini-3.5-flash` ที่ตั้งไว้แล้วใน `config.py`
+     (มี retry-with-backoff อัตโนมัติจาก `llm_fallback.py` อยู่แล้ว) ถ้าพังหมดทุกโมเดล → `status="failed"`
+     + `processing_error` เหมือน `audio_worker` เดิม ไม่มี auto-retry queue ใหม่ ผู้ใช้ reprocess เอง
+  6. **ลบ `audio_worker/` ทั้งโฟลเดอร์ทิ้ง** (รวม `backend/audio.py` HTTP client, `start_worker.bat`)
+     เมื่อถึงเวลาตัดจริง — git history เก็บโค้ดไว้ให้กู้คืนได้ถ้าจำเป็น ไม่เก็บเป็น archive/ แยก
+  7. **⚠️ ยังไม่ตัดขาดจริง — รอทดสอบเพิ่มก่อน**: ทดลองจริงมีแค่ไฟล์ประชุมเดียว (คนละรอบ/โมเดล) ยังไม่พอ
+     ที่จะมั่นใจว่าคุณภาพดีสม่ำเสมอกับประชุมอื่น (คนพูดเยอะกว่า/เสียงคุณภาพแย่กว่า) — **ต้องทดสอบกับ
+     ไฟล์ประชุมอื่นอย่างน้อย 1-2 ไฟล์ก่อน** ค่อยลบ `audio_worker/` และตัด production path จริง เขียนโค้ด
+     adapter/wiring (ข้อ 2-3) เตรียมไว้ได้เลยตอนนี้ แต่การ garbage-collect `audio_worker/` ต้องรอผ่าน
+     ด่านนี้ก่อน — ดู handoff.md สำหรับ session ที่บันทึกการ grill นี้
 - `[ ]` ⚠️ **พบจาก `/scrutinize` (2026-08-02), ยังไม่ได้แก้ — ต้องทำก่อนใช้งานจริง**:
   1. `[x]→🔄` **เดิม: แก้แล้ว — ทดสอบ multi-chunk path จริงแล้ว (2026-08-02, ก่อน redesign)**: ลด `ASR_CHUNK_SECONDS=2` ชั่วคราวแล้วยิงไฟล์ทดสอบเดิมซ้ำ พบว่าการตัดตามเวลาตายตัวตัดกลางประโยคได้จริง — **นี่คือสาเหตุที่เลือก redesign เป็นตัด ASR ทีละ diarization segment แทน** (ดูรายการด้านบน) แทนที่จะพยายาม merge chunk-level เข้ากับ speaker segment ทีหลัง — ⚠️ ข้อจำกัดใหม่ที่ยังไม่ได้ทดสอบจริง: การ **sub-split** segment ที่ยาวเกิน `ASR_MAX_SEGMENT_SECONDS` (คนพูดยาวต่อเนื่องไม่มีใครขัด) ยังตัดกลางประโยคได้เหมือนกัน แค่เกิดถี่น้อยกว่าเดิมมาก (เฉพาะ segment ยาว ไม่ใช่ทุกชิ้น)
   2. **`audio_worker/processed/*.wav` ไม่เคยถูกลบ** — ทุกไฟล์ที่ประมวลผลจะเก็บสำเนา 16kHz mono WAV ไว้ถาวรไม่มีวันลบเอง ดิสก์จะโตไม่มีที่สิ้นสุดถ้าใช้งานสม่ำเสมอ (คนละเรื่องกับ retention policy ของไฟล์ต้นฉบับด้านล่าง แต่เป็นปัญหาคลาสเดียวกัน)
   3. **ไม่มี timeout/watchdog ถ้า diarization หรือ ASR ค้าง** — โปรเจกต์นี้เคยเจอ process ค้าง 10+ นาทีมาแล้วจริงๆ (ดู Module 0 root cause เดิม) ถ้าเกิดซ้ำใน audio_worker จะถือ `_pipeline_lock` ค้างตลอดไป ทำให้ worker รับงานใหม่ไม่ได้อีกเลยจนกว่าจะ restart process เอง
   4. **`meeting_id`/`filename` เพิ่ง validate กัน path traversal พื้นฐานแล้ว** (เช็ค `..`/`/`/`\\`) แต่ worker ยังเป็น HTTP service เปิดบน localhost ไม่มี auth ใดๆเลย — ยอมรับได้ตอนนี้ (เรียกจาก backend เท่านั้น) แต่ต้องทบทวนถ้าจะเปิดให้เรียกจากที่อื่น
-- `[ ]` เก็บไฟล์เสียง/วิดีโอต้นฉบับไว้ให้ FastAPI serve กลับมาเล่นย้อนหลังได้ (requirement ใหม่จากฟีเจอร์ transcript-sync)
+- `[x]` เก็บไฟล์เสียง/วิดีโอต้นฉบับไว้ให้ FastAPI serve กลับมาเล่นย้อนหลังได้ (requirement ใหม่จากฟีเจอร์ transcript-sync) — **ทำแล้ว (2026-08-04)**: ไฟล์ต้นฉบับถูกเก็บไว้ที่ `backend/uploads/` อยู่แล้วตั้งแต่ Module 1 (ไม่เคยลบทิ้ง) เพิ่ม `GET /api/meetings/{id}/audio` ให้ stream กลับผ่าน `FileResponse` (รองรับ HTTP Range/206 สำหรับ seek ในตัวจาก Starlette เอง ไม่ต้องเขียน chunking เอง) ดู task.md Module 6
 - `[ ]` ⚠️ **นโยบายเก็บรักษาไฟล์เสียง/วิดีโอต้นฉบับ (ยังไม่ตัดสินใจ, พบจาก `/scrutinize`)**: ต้องกำหนด retention period (เช่น ลบอัตโนมัติ N วันหลัง Approve), encryption at rest, และสิทธิ์เข้าถึงระดับไฟล์ (ไม่ใช่แค่ metadata) ก่อนเริ่มเก็บไฟล์จริง — องค์กรมี HR_PDPA_Policy/Data_Breach_Policy ใช้บังคับจริงอยู่แล้ว การเก็บเสียงประชุมบอร์ดโดยไม่มีนโยบายชัดเจนเสี่ยงขัด policy ตัวเอง
 - `[x]` ⚠️→✅ **verify VRAM จริงของ `typhoon-asr`** — วัดจริงแล้ว (2026-08-02, ดู Module 0 ด้านบนสำหรับตัวเลขเต็ม): peak reserved 564MiB บน RTX 3050 Laptop (4096MiB) พอกับ VRAM 4GB จริง
 - `[ ]` ออกแบบ UX คิวสำหรับ user ที่อัปโหลดพร้อมกัน (queue เดียว ประมวลผลทีละไฟล์ — ต้องมีหน้าจอแจ้งสถานะ/แจ้งเตือนเมื่อเสร็จใน Module 6) — `audio_worker`'s `/health` คืนสถานะ `idle`/`processing` แล้ว (`pipeline.get_status()`) พร้อมให้ frontend poll ได้ แต่ UI ยังไม่ได้ออกแบบ
@@ -130,28 +205,157 @@ detection ในโค้ดของ Com Sec เองเพื่อไม่�
 
 ## Module 3: Meeting Minutes Generation
 
-- `[ ]` ใช้ Gemini ผ่าน `google-genai` SDK เดียวกับ Local RAG (ไม่ใช่ Claude) — reuse `llm_fallback.py`'s `run_with_fallback()` (retry+backoff+auto-fallback ที่ผ่าน test มาแล้ว) แทนการเขียน retry logic ใหม่
-- `[ ]` ใช้ **native structured output ของ Gemini** (`response_schema` + `response_mime_type="application/json"`) แทนการเพิ่ม library `Instructor` ตามแผนเดิม — ลด dependency ที่ไม่จำเป็น
-- `[ ]` ออกแบบ Pydantic schema สำหรับ Minutes of Meeting (ต้องคุยร่วมกับ Module 4 เรื่อง mapping ไปยัง Word template)
-- `[ ]` เขียน prompt ใหม่: transcript (พร้อม speaker+timestamp) → JSON โครงสร้าง
-- `[ ]` **ใช้ Gemini API แบบเปิด billing (paid tier) ตั้งแต่ทดสอบด้วยเนื้อหาจริงครั้งแรก** ไม่รอถึง production — เพราะเนื้อหาประชุมบอร์ดเป็นความลับสูง และ paid tier ยืนยันแล้วว่าไม่นำ prompt/response ไปเทรนโมเดล (Google Cloud DPA) ต่างจาก free tier ที่มนุษย์อาจ review ได้ (ทดสอบด้วยข้อมูลสมมติบน free tier ได้ปกติ)
+- `[x]` ✅ **ใช้ Gemini ผ่าน `google-genai` SDK ตรงๆ (ไม่ใช่ Claude, ไม่ผ่าน llama_index) — เขียนเสร็จแล้ว
+  (2026-08-03, `/debug-mantra`)**: เดิม task นี้เขียนไว้ว่า "SDK เดียวกับ Local RAG" ซึ่งของจริงคือ Local
+  RAG's `llm_fallback.py::build_llm()` ห่อด้วย `llama-index-llms-google-genai` (ไม่รองรับ
+  `response_schema` ตรงๆ ผ่าน `.complete()`) — ใช้ raw `google-genai` `Client.models.generate_content()`
+  แทน (ยืนยันจากซอร์สจริงของ package ว่า `GenerateContentConfig.response_schema` + `response.parsed`
+  คืน Pydantic instance ให้ตรงๆ ไม่ต้อง parse เอง) **reuse `llm_fallback.py`'s `run_with_fallback()`
+  ได้ตรงตามแผนเดิม** เพราะมันรับ `factory`/`call` เป็น callable ทั่วไป ไม่ผูกกับ llama_index — copy
+  `rag_worker/llm_fallback.py` ไป `backend/llm_fallback.py` ตรงๆ ไม่แก้ (ตาม convention เดียวกับที่
+  rag_worker copy จาก Local RAG) — **สถาปัตยกรรม**: เรียก Gemini ตรงจากโปรเซส backend เอง ไม่สร้าง
+  โปรเซสที่ 3 เพิ่ม (ต่างจาก rag_worker/audio_worker) เพราะ `google-genai` ไม่มี native library
+  (torch/faiss) ที่จะชน Windows WINHTTP.dll — เหตุผลเดิมที่ต้องแยกโปรเซสไม่เกี่ยวข้องกับกรณีนี้
+- `[x]` ✅ **ใช้ native structured output ของ Gemini (`response_schema`+`response_mime_type`) แทน
+  Instructor — เขียนเสร็จแล้ว**: `backend/minutes_schema.py::MinutesGenerationResult` ส่งตรงเป็น
+  `response_schema` ผ่าน `backend/minutes_generation.py`
+- `[x]` ✅ **ออกแบบ Pydantic schema เสร็จแล้ว (คุยกับผู้ใช้ผ่าน `AskUserQuestion` ก่อนเขียนโค้ด)**:
+  เปิดไฟล์ template จริง `260628 Draft_EMPIRE - BOD Minutes 15-2569 v.5.docx` ดูก่อน (ของจริงที่เขียน
+  เสร็จแล้ว ไม่ใช่ template ที่มี placeholder — มีตารางย่อยรายละเอียดธุรกรรม/ตัวเลข/สัดส่วนหุ้นซับซ้อน
+  มาก) — ผู้ใช้เลือก **schema แบบยืดหยุ่น (Recommended)**: ต่อวาระมีแค่ `discussion_summary`/
+  `resolution_status`/`resolution_text` เป็น free text ไม่พยายามแยก field ตัวเลข/ตารางธุรกรรมจาก
+  template ตรงๆ (ลดความเสี่ยง AI หลอนตัวเลขถ้า transcript พูดไม่ครบ) — เรื่องแมปไปยัง Word template
+  ละเอียด (ตาราง/ตัวเลข) ต้องรอ Module 4 ที่มนุษย์ (Maker/Checker) กรอก/ตรวจเพิ่มเอง ยังไม่ทำตอนนี้ —
+  **การลดความเสี่ยงหลอนอีกชั้น**: agenda_items ที่ส่งเข้า Gemini มาจาก `MeetingAgendaItem` ของจริงใน
+  DB เท่านั้น (ห้ามเพิ่มวาระใหม่เอง, เช็คจำนวน/agenda_order ตรงกันเป๊ะก่อนยอมรับผลลัพธ์ — ดู
+  `minutes_generation.py::generate_minutes()` validation), field ที่เป็น ground truth จาก DB อยู่แล้ว
+  (ชื่อบริษัท/เลขที่ประชุม/วันที่/รายชื่อผู้เข้าร่วม) **ไม่ให้ Gemini สร้างเลย** — merge เข้าไปทีหลัง
+- `[x]` ✅ **เขียน prompt ใหม่เสร็จแล้ว**: `backend/minutes_prompts.py` — transcript แปลงเป็นข้อความ
+  พร้อมชื่อผู้พูดจริง (ผ่าน speaker_mapping ที่บังคับครบ 100% แล้ว) + timestamp `[MM:SS]`, system
+  prompt เน้นกฎห้ามหลอนตัวเลข/ห้ามเพิ่มวาระใหม่/ห้ามแต่งเนื้อหาเกินกว่า transcript ระบุจริง
+- `[x]` ✅ **ใช้ Gemini API แบบเปิด billing (paid tier) — ตั้งค่าไว้แล้ว**: ใช้ `GOOGLE_API_KEY` เดียวกับ
+  ที่ Module 1 ยืนยันแล้วว่าเป็น paid tier ใน `backend/.env` (ไฟล์เดียวกับ rag_worker ใช้ค่าคนละตัวแปร
+  environment คนละไฟล์ .env — ดู `backend/.env.example`) — ⚠️ **พบบั๊กจริงระหว่างเขียน (mantra 4,
+  cross-reference กับ requirements.txt)**: `python-dotenv` อยู่ใน requirements.txt มาตั้งแต่ Module 1
+  แต่ไม่มีจุดไหนในโค้ด backend เรียก `load_dotenv()` เลยสักครั้ง — `backend/.env` ไม่เคยถูกโหลดเข้า
+  `os.environ` จริง (ไม่กระทบอะไรมาก่อนเพราะยังไม่มีโค้ดอ่าน env var จาก `.env` มาก่อน Module 3) —
+  แก้แล้วด้วย `backend/config.py` (ใหม่ทั้งไฟล์ เรียก `load_dotenv()` รวมศูนย์ที่เดียว)
+- `[x]` เขียน endpoint `POST /api/meetings/{id}/generate_minutes` (role Maker/Checker/Global_Admin
+  เหมือน `MEETING_MANAGE_ROLES` อื่น) — **บังคับ Speaker Mapping ครบ 100% ก่อนเสมอ** (ตัดสินใจจาก
+  `/grill-me` รอบ 3 ที่ค้างไว้ตั้งแต่เดิม) แยก helper `_is_speaker_mapping_complete()` ออกมาใช้ร่วมกับ
+  `_meeting_to_dict()` กันตรรกะ diverge — เขียนทับ `Meeting.minutes_json`/`minutes_generated_at`
+  ทั้งก้อนเสมอถ้าเรียกซ้ำ (ยังไม่มี versioning — ตรงกับ pattern JSON blob อื่นของโปรเจกต์นี้)
+- `[x]` **Verify ที่ทำแล้วในเซสชันนี้**: `py_compile`/`pyflakes` สะอาดทุกไฟล์ที่แก้/สร้างใหม่, เขียน
+  unit test ชั่วคราวใน sandbox (mock `google.genai.Client`, ไม่ต้องมี API key จริง) ยืนยัน 5 เคส:
+  happy path (primary model), fallback ทำงานถูกต้อง, ปฏิเสธผลลัพธ์ถ้าจำนวนวาระไม่ตรง, error ชัดเจนถ้า
+  ไม่มี API key, error ชัดเจนถ้าไม่มีวาระเลย — **ยังไม่เคยเรียก Gemini จริง** (sandbox ไม่มี API key จริง)
+  และ **ยังไม่เคยทดสอบปุ่ม Generate Minutes ในเบราว์เซอร์จริง** (`node --check` ผ่านเท่านั้น) — ผู้ใช้
+  ต้องเปิด `/dashboard/` กด Generate Minutes บน meeting ที่ speaker mapping ครบแล้วทดสอบเอง
+- `[ ]` ⚠️ **ยังไม่ได้ทำ**: วัด latency จริงของการเรียก Gemini structured output (ไม่มีตัวเลขอ้างอิง
+  — ตั้ง `GEMINI_MINUTES_TIMEOUT_MS` เท่ากับ rag_worker's `GEMINI_REQUEST_TIMEOUT_MS` (5 นาที) ไปก่อน
+  เผื่อเจอบั๊ก latency ผิดปกติแบบเดียวกับที่ Module 1 เคยเจอ), versioning/ประวัติการสร้าง Minutes ซ้ำ
+  (สร้างซ้ำแล้วเขียนทับของเก่าหายไปเลยตอนนี้ — พอสำหรับ MVP), การแมปไปยัง Word template จริงเป็นของ
+  Module 4
 
 ## Module 4 & 5: Word Template Mapping & Secure Delivery
 
-- `[ ]` วิเคราะห์ไฟล์เทมเพลต `260628 Draft_EMPIRE - BOD Minutes 15-2569 v.5.docx`
-- `[ ]` เขียนสคริปต์ `python-docx` แมปตัวแปร JSON ลงเอกสาร
-- `[ ]` เขียนระบบจัดการ Approval Flow (Maker/Checker) — **มีสถานะ "ตีกลับแก้ไข" อย่างเป็นทางการ (ตัดสินใจจาก `/grill-me` รอบ 3)**: อย่างน้อย 4 สถานะ `Draft` → `Pending_Review` → `Needs_Revision` (Checker reject พร้อมคอมเมนต์เหตุผล, กลับไปให้ Maker แก้) หรือ `Approved` → ส่งต่อ Board_Member — เก็บ audit trail ครบทุกรอบตีกลับเพื่อ compliance
-- `[ ]` สร้างฟังก์ชันดึงรายชื่ออีเมลจากระบบ แล้วส่ง Automated Secure Email (Magic Link) ถึง Board_Member หลัง Approve — **ต้องกำหนด token expiration + single-use ตั้งแต่ตอนออกแบบ** (พบจาก `/scrutinize` ว่ายังไม่ระบุ)
-- `[ ]` **ระบบ Archive ไฟล์แบบเลือกปลายทางได้ (พบจาก `/grill-me` รอบ 2)** — ตั้งค่าระดับระบบ (config path, ไม่ใช่ folder-picker ต่อครั้ง) แยก **2 ปลายทางตามประเภทไฟล์**:
-  1. `documents_destination` — รายงานการประชุมฉบับสมบูรณ์ (.docx/PDF) copy ไป mapped drive/UNC path ที่แชร์กับผู้บริหาร (Board_Member) หลัง Approve
-  2. `recordings_destination` — ไฟล์เสียง/วิดีโอต้นฉบับ + ข้อมูล transcript-sync แยกคนละที่เก็บ **เข้าถึงได้เฉพาะทีม Com Sec เท่านั้น** (Com_Sec_Maker/Checker/Global_Admin) ตามนโยบายชั้นความลับข้อมูล — **Board_Member ไม่มีสิทธิ์เข้าถึงจุดนี้**
-  - Implementation: `shutil.copy`/`shutil.copytree` ไป UNC path ตรงๆ (ไม่ต้องพึ่ง SharePoint Graph API ก็ได้ ปรับปลายทางได้ผ่าน config ภายหลัง) — ไม่มี version history อัตโนมัติแบบ SharePoint ต้อง log การ approve/copy เองใน DB
-- `[ ]` **ปรับ RBAC ของฟีเจอร์ transcript-sync player**: จำกัดเฉพาะ Com_Sec_Maker/Checker/Global_Admin เท่านั้น (แคบกว่า `/api/rag/query_confidential` เดิมที่รวม Board_Member ด้วย) — เพราะไฟล์เสียงดิบเป็นคนละชั้นความลับกับรายงานฉบับสมบูรณ์ที่ส่งให้บอร์ด
+- `[x]` ✅ **Multi-template (2026-08-03, เพิ่มทันทีหลังจบ session แรกของ Module 4-5 — ผู้ใช้ถามว่าจะดู/
+  แก้ template ตอนนี้และในอนาคตยังไงถ้าต้องมีประชุมที่ใช้ form อื่น)**: เพิ่ม `Meeting.template_name` +
+  `docx_generation.TEMPLATE_REGISTRY` (dict ชื่อ→{filename, label}) — dropdown "Document Template"
+  ใหม่ในหน้า Create Meeting (โหลดรายการจาก `GET /api/templates` ใหม่ ไม่ hardcode ใน frontend) เลือก
+  ได้ตอนสร้างประชุมเท่านั้น (แก้ทีหลังไม่ได้ผ่าน UI ตอนนี้ — ตั้งใจ กันสับสนหลังมี minutes ไปแล้ว) —
+  **ข้อจำกัดที่ตั้งใจ**: ทุก template ต้องใช้ Jinja context ชุดเดียวกัน (ต่างได้แค่ layout/ถ้อยคำ ไม่ใช่
+  ชุดข้อมูล) สร้าง `subcommittee` เป็นตัวอย่าง template ที่ 2 (ต่างจาก `bod_minutes` แค่คำในหัวเรื่อง)
+  พิสูจน์ว่ากลไกทำงานได้จริงด้วย unit test เต็ม flow (list templates → สร้างประชุมเลือก
+  `subcommittee` → generate_docx → เปิดไฟล์ผลลัพธ์เช็คว่าใช้หัวเรื่องที่ถูกต้อง → เทียบกับ meeting อีก
+  ใบที่ไม่ระบุ template_name แล้ว fallback เป็น `bod_minutes` ถูกต้อง) — **ทุก assertion ผ่านหมด**
+  **วิธีเพิ่ม template ใหม่ในอนาคต (ไม่ต้องแตะโค้ด Python เลยก็ได้)**: ก็อปปี้ไฟล์ `.docx` ที่มีอยู่ไป
+  ชื่อใหม่ในโฟลเดอร์ `backend/templates/` → เปิดแก้ layout/ถ้อยคำด้วย Microsoft Word ตรงๆ (ห้ามลบ/พิมพ์
+  ผิด Jinja tag เดิม) → เพิ่ม 1 entry ใน `docx_generation.TEMPLATE_REGISTRY` ชี้ไปที่ไฟล์ใหม่ — ยืนยัน
+  แล้วว่าเปิด/แก้/เซฟด้วย Word จริงไม่ทำให้ template พัง (ผู้ใช้เปิดไฟล์ `minutes_template.docx` ดูเอง
+  ระหว่างเซสชันนี้ ไฟล์ขนาดเปลี่ยนจาก Word resave แต่ยัง render ผ่าน `docxtpl` ได้ปกติทุกจุด — verify
+  ซ้ำแล้ว)
+
+- `[x]` ✅ **วิเคราะห์ไฟล์เทมเพลต `260628 Draft_EMPIRE - BOD Minutes 15-2569 v.5.docx` แล้ว** (ซ้ำกับที่
+  Module 3 เคยเปิดดูแล้ว แต่รอบนี้ดูละเอียดถึงระดับ font/margin/alignment ด้วย python-docx) ยืนยันอีกครั้ง
+  ว่าเป็นรายงานที่เขียนเสร็จสมบูรณ์แล้ว **ไม่มี placeholder เลยสักจุด** — ฟอนต์ TH SarabunPSK 15pt, A4,
+  margin ซ้าย/ขวา/บน 1 นิ้ว ล่าง 0.886 นิ้ว, หัวเอกสารจัดกึ่งกลาง, เนื้อหาจัด Thai-Justify — ดึงค่าพวกนี้
+  มาใช้ตรงๆใน template ใหม่ (ดูข้อถัดไป)
+- `[x]` ✅ **สร้าง template ใหม่ด้วย `docxtpl` แทนการพยายามใช้ไฟล์จริงเป็น template** (ตัดสินใจจาก
+  `AskUserQuestion` ก่อนเขียนโค้ด — ไฟล์จริงมีตารางธุรกรรม/ตัวเลข/สัดส่วนหุ้น 3 ตารางที่ผูกกับการประชุม
+  ครั้งนั้นเฉพาะ ไม่ generic พอ): `backend/build_minutes_template.py` (สคริปต์สร้าง, รันครั้งเดียว) →
+  `backend/templates/minutes_template.docx` (ไฟล์ผลลัพธ์ที่ commit เก็บไว้) ใช้ Jinja tag ของ `docxtpl`
+  (`{{ }}` ธรรมดา + `{%p for/endfor %}` สำหรับ loop attendees/agenda_items ที่ลบพารากราฟ tag ทิ้งเอง
+  หลัง render ไม่เหลือบรรทัดว่าง) — **verify ด้วยการ render จริงในเซสชันนี้** (ไม่ใช่แค่ทฤษฎี): ยืนยันว่า
+  loop/{{ }}/`{%p %}` ทำงานถูกต้องครบทุกจุดด้วยข้อมูลตัวอย่าง 2 วาระ 2 ผู้เข้าร่วม
+- `[x]` ✅ **เขียนโค้ด render minutes_json ลง template**: `backend/docx_generation.py`'s
+  `render_minutes_docx()` — แปลง `minutes_json` (โครงสร้างจาก Module 3's `MinutesOfMeeting`) เป็น
+  context ของ Jinja tag, แปลงวันที่ ISO (ค.ศ.) เป็นข้อความไทย พ.ศ. เอง (`thai_date()`, ไม่พึ่ง
+  `locale.setlocale("th_TH")` ที่อาจไม่มีบนเครื่อง Windows), แปล `resolution_status` enum ภาษาอังกฤษเป็น
+  label ไทย (มี `assert` กันลืมแก้ถ้ามีสถานะใหม่เพิ่มใน `minutes_schema.py` ในอนาคต) — เขียนทับไฟล์
+  `generated_docs/meeting_{id}_draft.docx` เดิมเสมอถ้า regenerate ซ้ำ
+- `[x]` ✅ **ตกลงกับผู้ใช้แล้วว่ารายละเอียดตาราง/ตัวเลขธุรกรรม (ที่ Module 3 ไม่สร้างให้ กันหลอน) ให้ Maker
+  เพิ่มเองด้วย Microsoft Word หลังดาวน์โหลดร่าง** (ตัดสินใจจาก `AskUserQuestion`, ไม่สร้าง table editor
+  ในระบบ) — flow จริง: `POST .../generate_docx` (สร้าง/regenerate ร่าง) → `GET .../download_docx?variant=draft`
+  → แก้ด้วย Word เอง → `POST .../upload_final_docx` (อัปโหลดกลับ, เข้าสถานะ `Pending_Review` ทันที) —
+  เก็บ path ร่าง (`minutes_docx_path`) กับฉบับสมบูรณ์ (`final_docx_path`) แยกกันคนละคอลัมน์ใน `Meeting`
+- `[x]` ✅ **เขียนระบบจัดการ Approval Flow (Maker/Checker) เสร็จแล้ว ครบ 4 สถานะตามแผน** —
+  `Meeting.approval_status`: `Draft` → (อัปโหลดฉบับสมบูรณ์) → `Pending_Review` → Checker
+  `POST .../review` (`action: "approve"|"reject"`) → `Needs_Revision` (บังคับมี `comment` เสมอ, กลับไป
+  ให้ Maker แก้แล้วอัปโหลดใหม่ได้) หรือ `Approved` (ต้องมี `final_docx_path` แล้วเท่านั้น) — **เฉพาะ
+  `Com_Sec_Checker` เท่านั้นที่เรียก `/review` ได้** (role อื่นได้ 403 — verify แล้วด้วย unit test จริง
+  ในเซสชันนี้) — audit trail เก็บที่ตาราง `MeetingApprovalLog` ใหม่ (append-only, บันทึกทุก
+  submit_for_review/reject/approve/delivery_failed/email_failed พร้อม user_id+timestamp+comment)
+- `[x]` ✅ **สร้างฟังก์ชันส่ง Automated Secure Email (Magic Link) ถึงผู้เข้าร่วมที่กรอกอีเมลไว้ หลัง
+  Checker Approve** — **ใช้ SMTP ธรรมดา (`smtplib`) แทน Microsoft Graph API** (ตัดสินใจจาก
+  `AskUserQuestion`: Azure AD ยังไม่เชื่อมต่อจริงในระบบเลย ดู `auth.py`) — **เพิ่ม
+  `MeetingAttendee.email` ให้ Maker กรอกเองต่อการประชุม** แทนที่จะรอ Azure AD จริงหรือ hardcode ผ่าน
+  `.env` (ตัดสินใจจาก `AskUserQuestion` เช่นกัน — ยังไม่มีตาราง user/email จริงในระบบเลยสักตาราง)
+  attendee ที่ไม่กรอก email จะไม่ได้รับอีเมล ไม่ error — **ต้องกำหนด token expiration + single-use
+  ตั้งแต่ตอนออกแบบ (พบจาก `/scrutinize`) — ทำแล้ว**: ตาราง `MagicLinkToken` ใหม่ (256-bit random token,
+  `expires_at`/`used_at` แยกกันชัดเจน, `verify_and_consume_token()` mark ใช้แล้วทันทีกันเปิดซ้ำ) —
+  **verify single-use + expiry จริงด้วย unit test ในเซสชันนี้** (เปิดลิงก์ครั้งที่ 2 ได้ 400 ถูกต้อง)
+- `[x]` ✅ **แปลง .docx → PDF (Password-Protected)**: ถามผู้ใช้แล้วเครื่อง Windows มี Microsoft Word
+  ติดตั้งอยู่ → ใช้ `docx2pdf` (COM automation ผ่าน Word) ใน `backend/pdf_generation.py`, ใส่รหัสผ่านด้วย
+  `pypdf` (pure Python ไม่ต้องพึ่ง qpdf binary ภายนอกเหมือน `pikepdf`) — **verify การเข้ารหัส/ถอดรหัส
+  PDF จริงด้วย `pypdf` ในเซสชันนี้แล้ว** (สร้าง PDF ทดสอบ → ใส่รหัสผ่าน → ถอดรหัสด้วยรหัสผ่านที่เก็บใน DB
+  จริง → อ่านเนื้อหาได้ถูกต้อง) — **⚠️ ส่วน `docx2pdf`/Word COM automation เองยังไม่เคยรันจริงสักครั้ง**
+  (sandbox ไม่มี Windows/Word) verify ได้แค่ `py_compile`/`pyflakes` เหมือนโค้ดที่พึ่ง GPU/เบราว์เซอร์ทุก
+  ครั้งก่อนหน้านี้ — ผู้ใช้ต้อง live test บนเครื่องจริงก่อนถือว่าใช้งานได้ (ดู handoff.md "How to resume")
+- `[x]` ✅ **ระบบ Archive ไฟล์แบบเลือกปลายทางได้ (พบจาก `/grill-me` รอบ 2)** — `backend/archive.py`
+  ใหม่ทั้งไฟล์ แยก 2 ปลายทางตามประเภทไฟล์ตามแผนเป๊ะ:
+  1. `documents_destination` (`config.ARCHIVE_DOCUMENTS_DESTINATION`) — final `.docx`+PDF หลัง Approve
+  2. `recordings_destination` (`config.ARCHIVE_RECORDINGS_DESTINATION`) — ไฟล์เสียงต้นฉบับ (จาก
+     `UPLOAD_DIR`) — **ยังไม่ได้รวม transcript JSON dump เป็นไฟล์แยกไปด้วย** (ขอบเขตที่ตัดไว้รอบนี้
+     เพื่อจำกัดสโคป — แค่ archive ไฟล์เสียงต้นฉบับพอสำหรับตอนนี้)
+  - Implementation: `shutil.copy2` ไป UNC path ตรงๆตามแผน ไม่พึ่ง SharePoint Graph API — **ค่าว่าง (ยัง
+    ไม่ตั้ง .env) = ข้าม + log warning เฉยๆ ไม่ทำให้ทั้ง flow Approve ล้มเหลว** (ตัดสินใจเอง, ไม่ใช่คุย
+    กับผู้ใช้แยก — เหตุผล: archive เป็นเรื่อง operational ไม่ควร block การตัดสินใจ approve ที่สมบูรณ์แล้ว)
+    ยังไม่มี UNC path จริงให้ทดสอบตอนนี้ (ผู้ใช้ต้องตั้งค่าเองก่อนใช้งานจริง)
+- `[x]` **ปรับ RBAC ของฟีเจอร์ transcript-sync player**: จำกัดเฉพาะ Com_Sec_Maker/Checker/Global_Admin เท่านั้น (แคบกว่า `/api/rag/query_confidential` เดิมที่รวม Board_Member ด้วย) — เพราะไฟล์เสียงดิบเป็นคนละชั้นความลับกับรายงานฉบับสมบูรณ์ที่ส่งให้บอร์ด — **ทำแล้ว (2026-08-04)**: `GET /api/meetings/{id}/audio` (backend/main.py) ผูก `require_role_for_audio_stream(MEETING_MANAGE_ROLES)` เดียวกับ upload/speaker_mapping — Board_Member โดน 403 จริง ดู task.md Module 6 + handoff.md session ล่าสุดสำหรับรายละเอียดเต็ม (⚠️ ยังไม่เคย live test จริงในเบราว์เซอร์กับทุก role — ตรวจแค่ตรรกะ/`py_compile`/`pyflakes`)
+- `[x]` **Verify ที่ทำแล้วในเซสชันนี้ (มากกว่าแค่ py_compile/pyflakes)**: เขียน end-to-end test จริงด้วย
+  FastAPI `TestClient` (mock `pdf_generation.convert_docx_to_pdf`/`email_service.send_magic_link_email`
+  เพราะ sandbox ไม่มี Word/SMTP จริง — ส่วนที่เหลือทั้งหมดรันจริงไม่ mock) ครอบคลุม: สร้าง draft docx →
+  ดาวน์โหลด → อัปโหลด final → Maker ถูกบล็อกจาก `/review` (403) → reject ไม่มี comment ถูกบล็อก (400) →
+  reject มี comment → `Needs_Revision` → อัปโหลดใหม่ → `Pending_Review` → approve → PDF ถูกสร้าง+ใส่
+  รหัสผ่านจริง (ถอดรหัสสำเร็จด้วยรหัสที่เก็บใน DB) → Magic Link ส่งเฉพาะ attendee ที่มี email (1 ใน 2
+  คน) → เปิดลิงก์สำเร็จ → เปิดซ้ำถูกปฏิเสธ (single-use) → approval log มีครบ 4 entry ตามลำดับที่ถูกต้อง
+  — **ทุก assertion ผ่านหมด** (ไฟล์ทดสอบเป็น throwaway ใน `/tmp`, ลบไฟล์ที่หลุดเข้า `generated_docs/`
+  จริงหลังเทสเสร็จแล้วผ่าน `allow_cowork_file_delete`)
+- `[ ]` **ยังไม่ได้ทำ**: live test จริงบนเครื่อง Windows (Word COM automation/SMTP จริง/UNC path
+  จริง — ดู handoff.md "How to resume"), versioning ของรอบ approve ที่ >1 (เก็บแค่ path ล่าสุดเสมอ
+  เหมือนไฟล์อื่นของโปรเจกต์ ไม่เก็บทุก revision แยก), Module 6 frontend panel ยังไม่เคยเปิดจริงใน
+  เบราว์เซอร์เลย (เขียนจาก static analysis เหมือนงาน frontend อื่นๆของโปรเจกต์นี้ทุกครั้ง)
 
 ## Module 6: Front-End UI Integration
 
 - `[x]` ✅ **อ่านไฟล์ `EMPIRE CI(1).png` แล้ว** ดึงสี/โทนจริง (ไม่ใช่เดา — ดู handoff.md 3.6 สำหรับ hex code เต็ม)
 - `[x]` ~~ใช้ Stitch MCP Generate~~ — **"Stitch MCP" ไม่มีอยู่จริงในระบบ** (เช็ค MCP registry แล้วไม่พบ, ดู handoff.md 3.6) ผู้ใช้ใช้ **Google Stitch ผ่าน Antigravity แทน** (เครื่องมือคนละตัว, ออกแบบเองนอกเซสชันนี้) ได้ผลลัพธ์เป็น static HTML/CSS 4 ไฟล์ที่ `D:\Com Sec\ComSecAI_Dashboard\`
 - `[x]` ✅ **นำ UI มาเชื่อมกับ FastAPI แล้ว (2026-08-02)** — mount เป็น static files ที่ `/dashboard` ผ่าน `StaticFiles(html=True)` ใน `backend/main.py` — **ไม่ต้องตั้ง CORS เลย** (ต่างจากที่ item เดิมกลัวไว้ เพราะ serve same-origin กับ `/api/*` จาก FastAPI เดียวกัน ไม่ใช่ dev server แยก) เขียน `ComSecAI_Dashboard/app.js` ต่อทั้ง 3 หน้า (dashboard/create-meeting/meeting-detail) เข้ากับ endpoint จริงครบ (`GET/POST /api/meetings`, upload, speaker_mapping) — ✅ **verify จริงในเบราว์เซอร์สำเร็จแล้ว (2026-08-02)** — ทดสอบ flow เต็ม: สร้างประชุม → อัปโหลด → poll จน transcribed → จับคู่ผู้พูด → export transcript (.txt) สำเร็จ ตรวจไฟล์ที่ export ออกมาแล้วถูกต้องทุกจุด (timestamp/ชื่อที่จับคู่/ข้อความตรงกับข้อมูลจริง) — **ไม่มีรายงานบั๊ก UI/layout กลับมา**
-- `[ ]` **ฟีเจอร์ใหม่: Synced Audio/Video Player + Transcript Panel** (แบบดูวิดีโออบรมออนไลน์ที่มี script ด้านขวา) — อ้างอิงแพทเทิร์นจาก `meetily/frontend` (`AudioPlayer.tsx`/`useAudioPlayer.ts`/`TranscriptView.tsx`) แต่เขียนใหม่ด้วย HTML5 `<audio>`/`<video>` + `ontimeupdate` แทน Tauri-specific `invoke('read_audio_file')` ที่เอามาใช้ในเว็บตรงๆ ไม่ได้ ต้องอาศัย timestamp per-segment จาก Module 2 — **ยังไม่ได้ทำ** (Stitch mockup รอบนี้ไม่มี audio player เลย, transcript panel เป็น text-only)
+- `[x]` ⚠️→✅ **ฟีเจอร์ใหม่: Synced Audio/Video Player + Transcript Panel** (แบบดูวิดีโออบรมออนไลน์ที่มี script ด้านขวา) — อ้างอิงแพทเทิร์นจาก `meetily/frontend` (`AudioPlayer.tsx`/`useAudioPlayer.ts`/`TranscriptView.tsx`, ตรวจซอร์สจริงแล้ว `AudioPlayer.tsx` เป็นไฟล์ว่างเปล่า ใช้แค่ `useAudioPlayer.ts`+`TranscriptView.tsx` เป็นแนวทาง) เขียนใหม่ด้วย HTML5 `<audio>` + `ontimeupdate` แทน Tauri-specific AudioContext/`invoke('read_audio_file')` เดิม (เว็บ same-origin ไม่มีข้อจำกัดแบบ Tauri ให้ต้องอ้อม) — **ทำแล้ว (2026-08-04)**: Playback panel ใหม่ใน `meeting-detail.html` (นอก `main-content-grid` ตั้งใจ — โชว์ได้ตั้งแต่ status=uploaded ไม่ต้องรอ transcribed) ผูกกับ `transcript-container` เดิม 2 ทาง: (1) click บรรทัด transcript → seek `<audio>` ไปเวลานั้น+เล่นต่อ (2) `timeupdate` → ไฮไลต์บรรทัดที่กำลังเล่นอยู่ (`.transcript-line.active`, auto-scroll ถ้ายังไม่อยู่ในมุมมอง) ดู `app.js`'s `setupAudioPlayer`/`highlightActiveTranscriptSegment`/`meetingAudioUrl`
+  - **สโคปที่ตัดออกตั้งใจ (ไม่ใช่ MVP นี้)**: video-only ไม่มี custom scrubber/theme (ใช้ native `<audio controls>` เหมือน pattern `input[type=file]` เดิมของโปรเจกต์ที่ปล่อย browser-native ไป), ไม่มี `<video>` element แยก (ไฟล์ต้นฉบับที่เป็นวิดีโอ เช่น Google Meet/Teams recording ยังเล่นได้ผ่าน `<audio>` เอง แค่ไม่เห็นภาพ — พอสำหรับ "ฟังย้อนหลัง" ตามที่ผู้ใช้ขอรอบนี้)
+  - **RBAC**: `GET /api/meetings/{id}/audio` ผูก role เดียวกับ `MEETING_MANAGE_ROLES` (Com_Sec_Maker/Checker/Global_Admin) ผ่าน `require_role_for_audio_stream` ใหม่ใน `auth.py` (รับ token ผ่าน query string เพราะ `<audio src=...>` แนบ header เองไม่ได้ — ดู docstring เต็มใน `auth.py`/`main.py` สำหรับความเสี่ยงที่รู้อยู่แล้วเรื่อง token ใน query string ของ mock auth)
+  - **Verify ที่ทำแล้ว**: `py_compile`/`pyflakes` สะอาด (backend), `node --check app.js` ผ่าน — **⚠️ ยังไม่เคยเปิดจริงในเบราว์เซอร์เลย** (เขียนจาก static analysis เหมือนงาน frontend อื่นๆของโปรเจกต์นี้ทุกครั้ง ต้องให้ผู้ใช้ทดสอบบนเครื่อง Windows จริง: เล่น/pause/seek ทำงานถูกไหม, click transcript แล้ว seek ตรงไหม, ไฮไลต์ตามเวลาจริงไหม, Board_Member โดน 403 จริงไหม)
 - `[x]` ✅ หน้าจอแก้ไข Transcript (ไม่บังคับ, ตามแผน Module 2) — **เขียนเสร็จแล้ว** (ดู Module 2 รายการด้านบนสำหรับรายละเอียดเต็ม + handoff.md 3.8) — Stitch ไม่ได้ออกแบบมาด้วยแต่เพิ่มเข้าไปเองจนครบ ⚠️ ยังไม่ได้ทดสอบจริงในเบราว์เซอร์ (รอผู้ใช้ verify)
+- `[x]` ✅ **หน้าใหม่: Policy & Board Document Search (Module 1 RAG — ไม่เคยมี UI มาก่อนเลยตั้งแต่เขียน backend เสร็จ, session 3.1)** — ผู้ใช้ส่ง brief (`stitch_brief_rag_search.md`) ไปออกแบบผ่าน Google Stitch (Antigravity) เอง ได้ `search.html` กลับมา (Tailwind CDN + Material Symbols — คนละ tech stack จาก 3 หน้าเดิมที่ใช้ plain CSS แต่แยกไฟล์กันเลยไม่ชนกัน) — **ทำแล้ว (2026-08-04)**: ต่อเข้ากับ `POST /api/rag/query`/`POST /api/rag/query_confidential` จริงผ่าน `app.js`'s `initSearchPage()`/`submitSearchQuery()`/`appendSearchAiBubble()` ตัดส่วนที่ Stitch ใส่มาเกินสโคป (sidebar เดิมมี "Confidential Vault"/"Templates"/"Help Center"/"Logout"/notifications/settings/avatar — ไม่มีหน้า/backend รองรับสักอย่าง เป็น dead link ทั้งหมด) เหลือแค่สิ่งที่ผูกกับฟีเจอร์จริง: role-select (แก้ `initRoleSelect()` ให้รองรับหลาย `.role-select` ในหน้าเดียว sync กันเอง — หน้านี้มี 2 ตัว mobile+desktop), scope selector 2 ชุด sync กัน (pill กลางจอ + sidebar link), "New Search" (reset ในหน่วยความจำ), loading state ที่มี elapsed-time counter (สำคัญเพราะ query ช้าได้ถึง ~30 นาที ดู `backend/rag.py`'s `RAG_WORKER_TIMEOUT_SECONDS`), sources card render จาก response จริง (`{response, sources:[{file_name, content}], tokens}`) — เพิ่ม nav link "Policy Search" ในหัวอีก 3 หน้าเดิมด้วย (เดิมไม่มีทางเข้าหน้านี้จากที่ไหนเลย)
+  - **Verify ที่ทำแล้ว**: `node --check app.js` ผ่าน, เช็ค id ที่ JS อ้างอิงครบทุกตัวจริงใน HTML (สคริปต์เทียบ id set), HTML tag balance ผ่าน (เขียน checker เอง — sandbox ไม่มี HTML validator สำเร็จรูป) — **⚠️ ยังไม่เคยเปิดจริงในเบราว์เซอร์เลย** เหมือนงาน frontend อื่นๆของโปรเจกต์นี้ทุกครั้ง ต้องให้ผู้ใช้ทดสอบบนเครื่อง Windows จริง: ถามคำถามจริงทั้ง 2 scope, สลับ role แล้วเช็คว่า sync ระหว่าง mobile/desktop select ถูกไหม, กด New Search แล้ว state เคลียร์จริงไหม, sources card แสดงถูกไหมเมื่อมีเอกสารลับจริงใน confidential index (ตอนนี้ดัชนีลับยังว่างอยู่ — ดู Module 1 รายการด้านบน)
