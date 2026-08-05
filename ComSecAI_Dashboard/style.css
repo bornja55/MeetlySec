@@ -9,7 +9,7 @@
   --secondary-cyan-deep: #123B3A;
   --text-main: #FFFFFF;
   --text-muted: #A0B0B0;
-  
+
   /* Status Colors */
   --status-draft: #6c757d;
   --status-uploaded: #ACD8D9;
@@ -18,10 +18,10 @@
   --status-failed: #dc3545;
   --status-success: #28a745;
   --status-warning: #ffc107;
-  
+
   /* Radii */
   --radius: 8px;
-  
+
   /* Fonts */
   --font-heading: 'Montserrat', sans-serif;
   --font-body: 'Inter', sans-serif;
@@ -172,6 +172,7 @@ label {
 
 input[type="text"],
 input[type="date"],
+input[type="email"],
 textarea {
   width: 100%;
   padding: 0.75rem;
@@ -181,6 +182,14 @@ textarea {
   border-radius: var(--radius);
   font-family: var(--font-body);
   box-sizing: border-box;
+}
+
+/* เพิ่มสำหรับ Documents & Approval Panel (Module 4-5 — ไม่ได้อยู่ใน mockup เดิมจาก Stitch) —
+   input[type=email] ใช้ selector ร่วมด้านบนแล้ว (ดู input[type="text"] ฯลฯ) ส่วน input[type=file]
+   theme เต็มไม่ได้ (browser-native picker button) แค่ตั้งสีตัวอักษร label ชื่อไฟล์ให้อ่านออกบนพื้นเข้ม */
+input[type="file"] {
+  color: var(--text-main);
+  font-family: var(--font-body);
 }
 
 /* เพิ่มสำหรับ Edit Transcript (ไม่ได้อยู่ใน mockup เดิมจาก Stitch) */
@@ -198,6 +207,16 @@ textarea {
 }
 .transcript-edit-row .edit-meta .speaker-name {
   margin-right: 0.5rem;
+}
+
+/* เพิ่มสำหรับ Minutes Panel (Module 3 — ไม่ได้อยู่ใน mockup เดิมจาก Stitch) */
+.minutes-agenda-item {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--secondary-cyan-deep);
+}
+.minutes-agenda-item:last-of-type {
+  border-bottom: none;
 }
 
 input:focus {
@@ -228,6 +247,22 @@ input:focus {
 /* Transcript */
 .transcript-line {
   margin-bottom: 1rem;
+  padding: 0.4rem 0.6rem;
+  margin-left: -0.6rem;
+  margin-right: -0.6rem;
+  border-radius: var(--radius);
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.transcript-line:hover {
+  background-color: rgba(172, 216, 217, 0.08);
+}
+/* ไฮไลต์บรรทัดที่กำลังเล่นอยู่ใน Audio Playback panel (ใหม่ 2026-08-04, ดู app.js's
+   highlightActiveTranscriptSegment) */
+.transcript-line.active {
+  background-color: var(--secondary-cyan-deep);
+  border-left-color: var(--primary-gold);
 }
 .speaker-name {
   font-weight: 600;

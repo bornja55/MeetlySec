@@ -18,6 +18,7 @@
         <option>Board Member</option>
         <option>Admin</option>
       </select>
+      <a href="search.html" class="btn btn-secondary">Policy Search</a>
       <a href="index.html" class="btn btn-secondary">Back to Dashboard</a>
     </div>
   </header>
@@ -30,8 +31,17 @@
           <span id="meeting-date" style="color: var(--text-muted); font-size: 1rem; font-weight: normal;"></span>
         </h2>
         <span id="meeting-status-badge" style="vertical-align: super;"></span>
+        <div id="meeting-template-label" class="text-muted" style="font-size: 0.85rem;"></div>
       </div>
-      <button id="export-transcript-btn" class="btn btn-secondary">Export Transcript</button>
+      <div style="display: flex; gap: 0.75rem;">
+        <!-- Re-upload/reprocess — ใหม่ (ไม่มีใน Stitch mockup เดิม) เพิ่มเข้ามาเพราะเดิมไม่มีทางแก้
+             ไฟล์เสียง/reprocess ซ้ำได้เลยหลัง status เป็น transcribed แล้ว (dashboard's
+             actionCellHtml() มีปุ่ม Re-upload ให้แค่ตอน status="failed" เท่านั้น) — ซ่อนไว้ก่อน
+             แสดงเฉพาะตอน transcribed/failed เท่านั้น (คุมผ่าน app.js::loadMeetingDetail กันกดซ้อน
+             ระหว่าง processing/uploaded ที่มีงานค้างอยู่แล้ว) -->
+        <button id="reupload-audio-btn" class="btn btn-secondary" style="display: none;">Re-upload Audio</button>
+        <button id="export-transcript-btn" class="btn btn-secondary">Export Transcript</button>
+      </div>
     </div>
 
     <!-- Read-only Summary -->
@@ -46,6 +56,18 @@
           <ul id="agenda-list" style="color: var(--text-muted); padding-left: 1.2rem;"></ul>
         </div>
       </div>
+    </div>
+
+    <!-- Audio/Video Playback Panel (ใหม่, ไม่มีใน Stitch mockup เดิม) — "preview ฟังไฟล์เสียงย้อนหลัง"
+         อยู่นอก main-content-grid ตั้งใจ เพราะโชว์ได้ตั้งแต่ status=uploaded (ยังไม่ transcribed ก็ฟัง
+         ได้แล้ว) ไม่ผูกกับ transcript เหมือน panel อื่น — คุม display ผ่าน app.js::setupAudioPlayer
+         (ดูตาม meeting.audio_filename ตรงๆ ไม่ใช่ status) -->
+    <div id="audio-player-panel" class="panel" style="display: none;">
+      <div class="panel-header">
+        <h3>ฟังไฟล์เสียงย้อนหลัง (Playback)</h3>
+      </div>
+      <audio id="meeting-audio-player" controls preload="metadata" style="width: 100%;"></audio>
+      <p id="audio-player-error" class="text-muted" style="color: var(--status-failed); margin-bottom: 0;"></p>
     </div>
 
     <!-- แสดงเมื่อยังไม่มี transcript (draft/uploaded/processing/failed) แทน 2 panel หลัก -->
@@ -69,6 +91,26 @@
         </div>
         <div id="transcript-container" style="max-height: 500px; overflow-y: auto; padding-right: 1rem;"></div>
       </div>
+    </div>
+
+    <!-- Minutes Panel — Module 3 (ใหม่, ไม่มีใน Stitch mockup เดิม เพิ่มเข้ามาเอง) แสดง/ซ่อนพร้อมกับ
+         main-content-grid ด้านบน (คุมผ่าน app.js::renderMainContent เดียวกัน) -->
+    <div id="minutes-panel" class="panel" style="display: none;">
+      <div class="panel-header flex-between">
+        <h3>Minutes of Meeting (AI Draft)</h3>
+        <button id="generate-minutes-btn" class="btn btn-primary">Generate Minutes</button>
+      </div>
+      <div id="minutes-container"></div>
+    </div>
+
+    <!-- Documents & Approval Panel — Module 4-5 (ใหม่, ไม่มีใน Stitch mockup เดิม เพิ่มเข้ามาเอง)
+         แสดง/ซ่อนพร้อมกับ minutes-panel ด้านบน (คุมผ่าน app.js::renderMainContent เดียวกัน) -->
+    <div id="documents-panel" class="panel" style="display: none;">
+      <div class="panel-header flex-between">
+        <h3>เอกสารและการอนุมัติ (Module 4-5)</h3>
+        <span id="approval-status-badge"></span>
+      </div>
+      <div id="documents-container"></div>
     </div>
   </main>
 

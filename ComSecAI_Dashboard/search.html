@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="th"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Policy &amp; Board Document Search - Com Sec AI</title>
+<!-- style.css เดิม (ใช้ .role-select) — โหลดก่อน Tailwind CDN แต่ไม่ชนกัน เพราะ .role-select เป็น
+     class selector (specificity สูงกว่า element selector ที่ Tailwind Preflight ใช้ reset) -->
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&amp;family=Inter:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary": "#f7cc81",
+                        "on-secondary-container": "#95c0c1",
+                        "tertiary-container": "#96bebc",
+                        "secondary": "#a3cfd0",
+                        "on-tertiary-fixed": "#00201f",
+                        "on-tertiary-fixed-variant": "#264d4c",
+                        "on-primary-fixed": "#271900",
+                        "surface-dim": "#001718",
+                        "surface-container": "#092325",
+                        "on-background": "#cde7ea",
+                        "on-error": "#690005",
+                        "secondary-fixed": "#beebec",
+                        "on-surface-variant": "#d1c5b4",
+                        "tertiary-fixed": "#c1eae8",
+                        "on-secondary-fixed": "#002021",
+                        "error-container": "#93000a",
+                        "on-error-container": "#ffdad6",
+                        "tertiary": "#b1dad8",
+                        "background": "#001718",
+                        "surface-container-lowest": "#001112",
+                        "outline": "#9a8f80",
+                        "tertiary-fixed-dim": "#a6cecc",
+                        "surface": "#001718",
+                        "surface-container-highest": "#20393b",
+                        "outline-variant": "#4e4639",
+                        "on-primary-container": "#5f4301",
+                        "surface-variant": "#20393b",
+                        "secondary-fixed-dim": "#a3cfd0",
+                        "primary-container": "#d9b168",
+                        "on-surface": "#cde7ea",
+                        "on-secondary-fixed-variant": "#224d4e",
+                        "primary-fixed": "#ffdea7",
+                        "on-tertiary": "#0c3635",
+                        "inverse-primary": "#785919",
+                        "inverse-surface": "#cde7ea",
+                        "on-primary": "#412d00",
+                        "surface-container-high": "#152e30",
+                        "error": "#ffb4ab",
+                        "secondary-container": "#255051",
+                        "inverse-on-surface": "#1c3436",
+                        "primary-fixed-dim": "#eac076",
+                        "on-primary-fixed-variant": "#5e4200",
+                        "on-tertiary-container": "#274e4d",
+                        "on-secondary": "#053638",
+                        "surface-container-low": "#051f21",
+                        "surface-bright": "#253d3f",
+                        "surface-tint": "#eac076"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "16px",
+                        "container-max-width": "1280px",
+                        "base": "8px",
+                        "margin-desktop": "32px",
+                        "margin-mobile": "16px"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Montserrat"],
+                        "body-lg": ["Inter"],
+                        "headline-md": ["Montserrat"],
+                        "label-md": ["Inter"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["32px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-lg": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "label-md": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.01em", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: theme('colors.surface-variant');
+            border-radius: 20px;
+        }
+        /* role-select ของหน้านี้ (ธีม Tailwind) ให้เข้ากับพื้นเข้ม ต่างจาก .role-select เดิมที่ใช้ตัวแปร
+           :root ของ style.css เฉยๆ — override สีให้เข้ากับ token ของหน้านี้โดยเฉพาะ */
+        #search-page-role-select-desktop, #search-page-role-select-mobile {
+            background-color: #123B3A;
+            border-color: rgba(172, 216, 217, 0.2);
+        }
+    </style>
+</head>
+<body class="bg-[#0F282A] text-on-surface font-body-lg min-h-screen flex flex-col md:flex-row overflow-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopNavBar (Mobile Only) -->
+<header class="md:hidden bg-background dark:bg-background border-b border-secondary/15 flex justify-between items-center w-full px-margin-mobile h-16 sticky top-0 z-50">
+<div class="flex items-center gap-3">
+<a class="material-symbols-outlined text-primary" href="index.html" title="Back to Dashboard">arrow_back</a>
+<span class="font-headline-md text-headline-md font-bold text-primary dark:text-primary tracking-tight">Com Sec AI</span>
+</div>
+<select class="role-select" id="search-page-role-select-mobile" style="font-size: 0.8rem; padding: 0.35rem 0.5rem;">
+<option>Com Sec Maker</option>
+<option>Com Sec Checker</option>
+<option>Board Member</option>
+<option>Admin</option>
+</select>
+</header>
+<!-- SideNavBar (Desktop) -->
+<nav class="bg-surface-container dark:bg-surface-container border-r border-secondary/10 flex-col py-6 w-64 h-screen hidden md:flex shrink-0 z-40 fixed left-0 top-0">
+<div class="px-6 mb-6 flex flex-col gap-1">
+<h1 class="font-headline-md text-headline-md font-extrabold text-primary tracking-tight">Com Sec AI</h1>
+<p class="font-label-md text-label-md text-on-surface-variant">Policy &amp; Board Search</p>
+</div>
+<div class="px-4 mb-4">
+<a class="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors font-label-md text-label-md" href="index.html">
+<span class="material-symbols-outlined text-[18px]">arrow_back</span>
+                Back to Dashboard
+            </a>
+</div>
+<div class="px-4 mb-6">
+<button class="w-full bg-primary-container text-on-primary-container font-label-md text-label-md font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-2 hover:bg-primary-fixed transition-colors" id="new-search-btn" type="button">
+<span class="material-symbols-outlined text-[20px]">add</span>
+                New Search
+            </button>
+</div>
+<!-- Scope selector (sync กับ pill selector ในเนื้อหาหลักผ่าน app.js's setSearchScope() — คลิกจากที่
+     ไหนก็ได้ ผลลัพธ์ตรงกัน ไม่มี 2 state แยกกัน) -->
+<div class="flex-1 px-2 space-y-1 overflow-y-auto custom-scrollbar">
+<a class="scope-nav-link flex items-center gap-3 text-on-surface-variant dark:text-on-surface-variant px-4 py-3 rounded-lg hover:bg-surface-container-high dark:hover:bg-surface-container-high hover:text-on-surface transition-colors font-label-md text-label-md" data-scope="general" href="#" id="scope-nav-general">
+<span class="material-symbols-outlined text-[20px]">policy</span>
+                นโยบายทั่วไป
+            </a>
+<a class="scope-nav-link flex items-center gap-3 text-on-surface-variant dark:text-on-surface-variant px-4 py-3 rounded-lg hover:bg-surface-container-high dark:hover:bg-surface-container-high hover:text-on-surface transition-colors font-label-md text-label-md" data-scope="confidential" href="#" id="scope-nav-confidential">
+<span class="material-symbols-outlined text-[20px]">lock</span>
+                เอกสารบอร์ด (ลับ)
+            </a>
+</div>
+<div class="mt-auto px-4 pt-4 border-t border-secondary/10">
+<select class="role-select" id="search-page-role-select-desktop" style="width: 100%;">
+<option>Com Sec Maker</option>
+<option>Com Sec Checker</option>
+<option>Board Member</option>
+<option>Admin</option>
+</select>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 md:ml-64 flex flex-col h-[calc(100vh-64px)] md:h-screen bg-[#0F282A] relative">
+<!-- Chat Container -->
+<div class="flex-1 flex flex-col max-w-4xl w-full mx-auto p-4 md:p-8 overflow-hidden relative">
+<!-- Scope Selector (pill — โชว์ทั้ง mobile/desktop เพราะ sidebar ซ่อนบน mobile) -->
+<div class="flex justify-center mb-8">
+<div class="bg-[#1C3936] p-1 rounded-lg inline-flex border border-secondary/15 shadow-sm">
+<button class="scope-pill px-6 py-2 rounded-md font-label-md text-label-md transition-colors focus:outline-none" data-scope="general" id="scope-pill-general" type="button">
+                        นโยบายทั่วไป
+                    </button>
+<button class="scope-pill px-6 py-2 rounded-md font-label-md text-label-md flex items-center gap-2 transition-colors focus:outline-none" data-scope="confidential" id="scope-pill-confidential" type="button">
+<span class="material-symbols-outlined text-[16px]">lock</span>
+                        เอกสารบอร์ด (ลับ)
+                    </button>
+</div>
+</div>
+<!-- Conversation Scroll Area -->
+<div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-8 pb-32 px-2 md:px-6" id="search-conversation">
+<!-- Empty State (ค่าเริ่มต้น, ซ่อนอัตโนมัติเมื่อมีคำถามแรกเข้ามา ดู app.js's appendSearchUserBubble) -->
+<div class="flex flex-col items-center justify-center text-center gap-4 flex-1 py-12" id="search-empty-state">
+<span class="material-symbols-outlined text-primary/60 text-[48px]">search</span>
+<p class="font-headline-md text-headline-md text-on-surface">ถามคำถามเกี่ยวกับนโยบายหรือเอกสารการประชุม</p>
+<div class="flex flex-col gap-2 text-on-surface-variant text-sm max-w-md">
+<p>ตัวอย่างคำถาม:</p>
+<p class="italic">"นโยบายการลาป่วยเป็นอย่างไร"</p>
+<p class="italic">"มติที่ประชุมบอร์ดครั้งล่าสุดเรื่องงบลงทุนคืออะไร"</p>
+</div>
+</div>
+<!-- Loading Indicator (ซ่อนไว้ก่อน, app.js's showSearchLoading/hideSearchLoading คุม display เอง
+     ย้ายไปต่อท้ายบทสนทนาเสมอก่อนแสดง — คำเตือนสำคัญ: query อาจใช้เวลาถึงหลายนาที ไม่ใช่ 2-3 วิ
+     แบบ search ทั่วไป ดู backend/rag.py's RAG_WORKER_TIMEOUT_SECONDS=1800 -->
+<div class="flex justify-start opacity-70" id="search-loading" style="display: none;">
+<div class="bg-transparent flex gap-4 items-center">
+<div class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center shrink-0 shadow-inner relative overflow-hidden">
+<span class="material-symbols-outlined text-primary/50 text-[18px]">search</span>
+<div class="absolute inset-0 bg-primary/20 animate-ping rounded-full"></div>
+</div>
+<span class="font-label-md text-label-md text-primary animate-pulse flex items-center gap-2">
+                            กำลังค้นหาและสรุปคำตอบ... อาจใช้เวลาถึงหลายนาที<span id="search-elapsed"></span>
+<span class="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+</span>
+</div>
+</div>
+</div>
+<!-- Input Area (Fixed at bottom of main content) -->
+<div class="absolute bottom-0 left-0 right-0 p-4 md:p-6 bg-gradient-to-t from-[#0F282A] via-[#0F282A] to-transparent pt-12">
+<div class="max-w-4xl mx-auto">
+<div class="bg-[#123B3A] rounded-xl border border-secondary/20 shadow-lg flex flex-col focus-within:border-primary/50 transition-colors relative overflow-hidden group">
+<!-- Decorative top glow -->
+<div class="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-primary/30 to-transparent opacity-0 group-focus-within:opacity-100 transition-opacity"></div>
+<textarea class="w-full bg-transparent text-on-surface font-body-lg text-body-lg resize-none border-none focus:ring-0 px-4 py-4 placeholder:text-on-surface-variant/50 custom-scrollbar" id="search-input" placeholder="ถามคำถามเกี่ยวกับนโยบาย หรือ ค้นหาเอกสารบอร์ด..." rows="2"></textarea>
+<div class="flex justify-between items-center px-4 pb-3">
+<div class="flex items-center gap-2 text-on-surface-variant/70">
+<span class="text-xs font-label-md px-2 py-0.5 rounded-full bg-surface-container-high border border-secondary/10">Ctrl + Enter to send</span>
+</div>
+<button class="bg-primary-container text-on-primary-container hover:bg-primary-fixed transition-colors font-label-md text-label-md font-semibold px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" id="search-submit-btn" type="button">
+<span class="material-symbols-outlined text-[18px]">send</span>
+                                ค้นหา
+                            </button>
+</div>
+</div>
+<div class="text-center mt-3">
+<span class="text-xs text-on-surface-variant/50 font-label-md">Com Sec AI สามารถทำผิดพลาดได้ กรุณาตรวจสอบข้อมูลกับเอกสารต้นฉบับเสมอ</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script src="app.js"></script>
+</body></html>
