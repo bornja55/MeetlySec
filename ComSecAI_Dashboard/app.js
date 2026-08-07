@@ -141,17 +141,25 @@ function speakerMatchingCellHtml(meeting) {
   return `<span class="badge badge-warning">Incomplete (${mapped}/${meeting.speaker_labels.length})</span>`;
 }
 
+// เลือกโมเดล Gemini เองตอน upload/re-upload (2026-08-05) — <select> ว่างไว้ก่อน (populate จริงใน
+// renderMeetingsTable() หลัง DOM สร้างเสร็จ เพราะ getModelOptionsHtml() เป็น async แต่ actionCellHtml
+// เป็น sync — ต้อง data-id ตรงกับปุ่มเพื่อ query ทีหลังได้)
+function modelSelectHtml(meeting) {
+  const title = "เลือกโมเดลเจาะจง = ปิดการสลับโมเดลสำรองอัตโนมัติทั้งหมด (ใช้โมเดลนั้นตัวเดียว)";
+  return `<select class="model-select" data-id="${meeting.id}" title="${title}" style="font-size: 0.8rem; padding: 0.3rem; margin-right: 0.5rem;"></select>`;
+}
+
 function actionCellHtml(meeting) {
   // draft: ยังไม่มีไฟล์เสียง → ปุ่มอัปโหลดอย่างเดียว (ไม่มีอะไรให้ดูใน detail page)
   // failed: อัปโหลดไปแล้วแต่ประมวลผลพัง → ปุ่ม re-upload (โชว์ processing_error เป็น title
   // tooltip กันต้องเปิดหน้าอื่นแค่เพื่อดู error สั้นๆ)
   // uploaded/processing/transcribed: มีอะไรให้ดูแล้ว → View ไปหน้า detail
   if (meeting.status === "draft") {
-    return `<button class="btn btn-secondary upload-btn" data-id="${meeting.id}">Upload Audio</button>`;
+    return `${modelSelectHtml(meeting)}<button class="btn btn-secondary upload-btn" data-id="${meeting.id}">Upload Audio</button>`;
   }
   if (meeting.status === "failed") {
     const title = meeting.processing_error ? ` title="${escapeHtml(meeting.processing_error)}"` : "";
-    return `<button class="btn btn-secondary upload-btn" data-id="${meeting.id}"${title}>Re-upload</button>`;
+    return `${modelSelectHtml(meeting)}<button class="btn btn-secondary upload-btn" data-id="${meeting.id}"${title}>Re-upload</button>`;
   }
   return `<a href="meeting-detail.html?id=${meeting.id}" class="btn btn-secondary">View</a>`;
 }
@@ -180,6 +188,11 @@ function renderMeetingsTable(meetings) {
   tbody.querySelectorAll(".upload-btn").forEach((btn) => {
     btn.addEventListener("click", () => triggerUpload(Number(btn.dataset.id), btn));
   });
+
+  // populate model-select ทุกแถวพร้อมกัน (async แยกจาก sync render ด้านบน — ดู modelSelectHtml())
+  getModelOptionsHtml().then((html) => {
+    tbody.querySelectorAll(".model-select").forEach((sel) => { sel.innerHTML = html; });
+  });
 }
 
 function triggerUpload(meetingId, btn) {
@@ -203,6 +216,11 @@ function triggerUpload(meetingId, btn) {
     try {
       const form = new FormData();
       form.append("file", input.files[0]);
+      // เลือกโมเดลเอง (2026-08-05) — <select class="model-select"> อยู่ข้างปุ่มเดียวกันเสมอ (ดู
+      // actionCellHtml()) ค่าว่าง = ใช้ fallback chain ปกติจาก backend (ไม่ส่ง field นี้เลยถ้าไม่ได้
+      // เลือกอะไร กัน backend ต้องแยกแยะ "" กับไม่ส่งมา)
+      const modelSelect = btn.parentElement?.querySelector(".model-select");
+      if (modelSelect && modelSelect.value) form.append("model", modelSelect.value);
       await apiFetch(`/api/meetings/${meetingId}/upload`, { method: "POST", body: form });
       await loadMeetings();
     } catch (err) {
@@ -262,6 +280,7 @@ function addAgendaRow(container) {
   row.className = "agenda-row";
   row.style.cssText = "display: flex; gap: 1rem; margin-bottom: 1rem;";
   row.innerHTML = `
+    <input type="text" class="agenda-label" placeholder="เลขวาระ (ไม่บังคับ)" style="width: 160px;">
     <input type="text" class="agenda-item" placeholder="Agenda item" style="flex: 1;">
     <button type="button" class="btn btn-secondary remove-row-btn" style="color: var(--status-failed); border-color: var(--status-failed);">Remove</button>
   `;
@@ -278,6 +297,41 @@ async function loadTemplateOptions(selectEl) {
   } catch (err) {
     selectEl.innerHTML = '<option value="bod_minutes">รายงานการประชุมคณะกรรมการบริษัท (BOD Minutes)</option>';
   }
+}
+
+/** เลือกโมเดล Gemini เองตอน upload/re-upload (2026-08-05, ผู้ใช้ขอ — ดู backend's
+ * GET /api/transcription_models/config.py's GEMINI_TRANSCRIPTION_MODEL_CHOICES) — cache ผลไว้
+ * module-level เพราะ dashboard เรียกใช้ต่อแถว (หลาย meeting พร้อมกัน) ไม่อยาก fetch ซ้ำทุกแถว
+ * ต่างจาก loadTemplateOptions() ที่มีแค่จุดเดียว (create-meeting.html) เลย fetch ตรงได้เลยไม่ต้อง
+ * cache */
+let _modelOptionsHtmlCache = null;
+
+async function getModelOptionsHtml() {
+  if (_modelOptionsHtmlCache) return _modelOptionsHtmlCache;
+  try {
+    const data = await apiFetch("/api/transcription_models");
+    // ⚠️ บั๊กที่แก้ตรงนี้ (พบจาก log จริง 2026-08-07, /debug-mantra): เดิม options ทุกตัว map จาก
+    // data.models ล้วนๆ (ไม่มีค่าว่างเลย) แล้ว pre-select โมเดล primary (data.default) ไว้เสมอ —
+    // triggerUpload()/triggerReuploadOnDetailPage() เช็คแค่ `if (modelSelect.value)` ก่อน append
+    // field "model" (ดู comment เดิมบรรทัดนั้น: "ค่าว่าง = ใช้ fallback chain ปกติจาก backend")
+    // แต่เพราะ <select> มี option ที่ selected อยู่เสมอ .value จึงไม่เคยว่างจริงเลยสักครั้ง — ทุก
+    // upload/re-upload จากหน้านี้เลยส่ง model override มาเสมอ 100% โดยผู้ใช้ไม่รู้ตัว ทำให้
+    // audio_native.py's `fallback_models = [] if model_override else config.FALLBACK` (บรรทัด 172)
+    // ปิด fallback chain ทั้ง 3 โมเดลทิ้งไปเงียบๆทุกครั้ง — เจอจริง: chunk พัง 503 ครั้งเดียวแล้ว fail
+    // ทันที ไม่มี log พยายามลองโมเดลสำรองเลยสักบรรทัด — เพิ่ม option ค่าว่างกลับมาเป็นดีฟอลต์ (ตรงกับ
+    // เจตนาเดิมที่ comment ไว้แล้วทั้ง 2 จุด ไม่ใช่การเปลี่ยน design ใหม่) โมเดลเจาะจงยังเลือกได้เหมือน
+    // เดิมทุกประการ แค่ไม่ใช่ค่าเริ่มต้นอีกต่อไป
+    const defaultOption =
+      '<option value="" selected>ค่าเริ่มต้น (ลองโมเดลสำรองอัตโนมัติถ้าโมเดลหลักพัง)</option>';
+    const modelOptions = data.models
+      .map((m) => `<option value="${escapeHtml(m.value)}">${escapeHtml(m.label)}${m.value === data.default ? " (หลัก)" : ""}</option>`)
+      .join("");
+    _modelOptionsHtmlCache = defaultOption + modelOptions;
+  } catch (err) {
+    // fallback แบบเดียวกับ loadTemplateOptions() — เผื่อ backend ยังไม่ทันมี endpoint นี้/เรียกไม่ได้
+    _modelOptionsHtmlCache = '<option value="" selected>ค่าเริ่มต้น (ใช้ fallback chain อัตโนมัติ)</option>';
+  }
+  return _modelOptionsHtmlCache;
 }
 
 function initCreateMeetingPage() {
@@ -329,9 +383,14 @@ function initCreateMeetingPage() {
       }))
       .filter((a) => a.name);
 
-    const agendaItems = Array.from(agendaContainer.querySelectorAll(".agenda-item"))
-      .map((input) => input.value.trim())
-      .filter((text) => text);
+    // เลขวาระ (2026-08-07, ผู้ใช้ขอ) — ส่งเป็น {label, description} คู่กัน ตัดแถวที่ไม่กรอก
+    // description ทิ้ง (label ปล่อยว่างได้ — backend เติม "วาระที่ N" ให้อัตโนมัติ)
+    const agendaItems = Array.from(agendaContainer.querySelectorAll(".agenda-row"))
+      .map((row) => ({
+        label: row.querySelector(".agenda-label").value.trim() || null,
+        description: row.querySelector(".agenda-item").value.trim(),
+      }))
+      .filter((a) => a.description);
 
     const submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
@@ -436,6 +495,20 @@ function renderSpeakerMapping(meeting, container) {
 function speakerDisplayName(meeting, speaker) {
   const mappedName = meeting.speaker_mapping[speaker];
   return mappedName ? `${escapeHtml(mappedName)} (${escapeHtml(speaker)})` : escapeHtml(speaker || "-");
+}
+
+/** โชว์ชื่อโมเดล Gemini ที่ transcribe สำเร็จจริง (2026-08-05, ผู้ใช้ขอให้บันทึก/แสดงทุกที่ — ดู
+ * backend/models.py's Meeting.transcription_model_used) — ซ่อนเงียบๆถ้าเป็น null (meeting เก่า
+ * ก่อนมี field นี้ หรือประมวลผลไม่สำเร็จ) ไม่ error/ไม่โชว์ข้อความว่างๆ */
+function renderTranscriptionModelUsed(meeting) {
+  const el = document.getElementById("transcript-model-used");
+  if (!el) return;
+  if (meeting.transcription_model_used) {
+    el.textContent = `ถอดเสียงด้วยโมเดล: ${meeting.transcription_model_used}`;
+    el.style.display = "";
+  } else {
+    el.style.display = "none";
+  }
 }
 
 function renderTranscript(meeting, container) {
@@ -626,18 +699,189 @@ function renderMeetingSummary(meeting) {
   const templateLabelEl = document.getElementById("meeting-template-label");
   if (templateLabelEl) templateLabelEl.textContent = `Template: ${meeting.template_label}`;
 
-  const participantsList = document.getElementById("participants-list");
-  participantsList.innerHTML = meeting.attendees.length
-    ? meeting.attendees.map((a) => {
+  renderParticipantsView(meeting);
+  renderAgendaView(meeting);
+
+  // แก้ไขย้อนหลังไม่ได้อีกหลัง Approved (ดู backend's _reject_if_approved()) — ซ่อนปุ่ม Edit ทั้งคู่
+  // กันกดแล้วเจอ 400 error แบบงงๆ ตอน Save
+  const isApproved = meeting.approval_status === "Approved";
+  const editParticipantsBtn = document.getElementById("edit-participants-btn");
+  const editAgendaBtn = document.getElementById("edit-agenda-btn");
+  if (editParticipantsBtn) editParticipantsBtn.style.display = isApproved ? "none" : "";
+  if (editAgendaBtn) editAgendaBtn.style.display = isApproved ? "none" : "";
+}
+
+function renderParticipantsView(meeting) {
+  const container = document.getElementById("participants-container");
+  container.innerHTML = meeting.attendees.length
+    ? `<ul style="color: var(--text-muted); padding-left: 1.2rem; margin: 0;">${meeting.attendees.map((a) => {
         const emailHtml = a.email ? ` <span class="text-muted">(${escapeHtml(a.email)})</span>` : "";
         return `<li>${escapeHtml(a.name)}${a.position ? " - " + escapeHtml(a.position) : ""}${emailHtml}</li>`;
-      }).join("")
-    : '<li class="text-muted">ไม่มีรายชื่อผู้เข้าร่วม</li>';
+      }).join("")}</ul>`
+    : '<p class="text-muted">ไม่มีรายชื่อผู้เข้าร่วม</p>';
+}
 
-  const agendaList = document.getElementById("agenda-list");
-  agendaList.innerHTML = meeting.agenda_items.length
-    ? meeting.agenda_items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")
-    : '<li class="text-muted">ไม่มีวาระการประชุม</li>';
+function renderAgendaView(meeting) {
+  const container = document.getElementById("agenda-container");
+  // agenda_items เป็น {label, description} ต่อรายการ (2026-08-07, ผู้ใช้ขอรองรับเลขวาระแบบ 3.1/3.2
+  // — ดู backend's models.py MeetingAgendaItem.label) เดิมเป็น string ล้วน
+  container.innerHTML = meeting.agenda_items.length
+    ? `<ul style="color: var(--text-muted); padding-left: 1.2rem; margin: 0;">${meeting.agenda_items.map((item) => `<li><strong>${escapeHtml(item.label || "")}</strong> ${escapeHtml(item.description)}</li>`).join("")}</ul>`
+    : '<p class="text-muted">ไม่มีวาระการประชุม</p>';
+}
+
+/** สร้าง 1 แถว input ของ attendee (ใช้ทั้งตอน render ครั้งแรกและตอนกด "+ เพิ่มผู้เข้าร่วม") — คืน
+ * DOM element ที่ผูก listener ปุ่มลบให้เรียบร้อยแล้ว ไม่ต้องมา query ใหม่ทีหลัง */
+function _buildAttendeeRow(a) {
+  const row = document.createElement("div");
+  row.className = "attendee-edit-row";
+  row.style.cssText = "display: flex; gap: 0.4rem; margin-bottom: 0.4rem;";
+  row.innerHTML = `
+    <input type="text" class="attendee-name" placeholder="ชื่อ" value="${escapeHtml(a.name || "")}" style="flex: 2; min-width: 0;">
+    <input type="text" class="attendee-position" placeholder="ตำแหน่ง" value="${escapeHtml(a.position || "")}" style="flex: 2; min-width: 0;">
+    <input type="email" class="attendee-email" placeholder="อีเมล (ไม่บังคับ)" value="${escapeHtml(a.email || "")}" style="flex: 2; min-width: 0;">
+    <button class="btn btn-secondary remove-row-btn" type="button" style="flex: 0 0 auto;">&times;</button>
+  `;
+  row.querySelector(".remove-row-btn").addEventListener("click", () => row.remove());
+  return row;
+}
+
+/** แก้ไขรายชื่อผู้เข้าร่วมย้อนหลังได้ (2026-08-07, ผู้ใช้ขอ — เดิมกรอกได้แค่ตอนสร้างประชุมเท่านั้น) —
+ * pattern เดียวกับ renderSpeakerMapping/renderTranscriptEditable ทุกประการ: สลับ container เป็น
+ * input rows, กด Save ยิง PUT ทีเดียวทั้ง array (เขียนทับหมด ไม่ partial-update), กด Cancel
+ * re-render จาก meeting object เดิมใน memory ไม่ยิง API */
+function renderParticipantsEdit(meeting) {
+  const container = document.getElementById("participants-container");
+  container.innerHTML = `
+    <div id="attendee-rows"></div>
+    <button id="add-attendee-row" class="btn btn-secondary" type="button" style="font-size: 0.8rem; margin: 0.4rem 0;">+ เพิ่มผู้เข้าร่วม</button>
+    <div class="flex-between">
+      <button id="save-attendees-btn" class="btn btn-primary">Save</button>
+      <button id="cancel-attendees-btn" class="btn btn-secondary">Cancel</button>
+    </div>
+    <p id="attendees-edit-error" class="text-muted" style="color: var(--status-failed); margin-bottom: 0;"></p>
+  `;
+
+  const rowsContainer = document.getElementById("attendee-rows");
+  const initialRows = meeting.attendees.length ? meeting.attendees : [{ name: "", position: "", email: "" }];
+  initialRows.forEach((a) => rowsContainer.appendChild(_buildAttendeeRow(a)));
+
+  document.getElementById("add-attendee-row").addEventListener("click", () => {
+    rowsContainer.appendChild(_buildAttendeeRow({ name: "", position: "", email: "" }));
+  });
+
+  document.getElementById("cancel-attendees-btn").addEventListener("click", () => {
+    renderParticipantsView(meeting);
+  });
+
+  document.getElementById("save-attendees-btn").addEventListener("click", async () => {
+    const btn = document.getElementById("save-attendees-btn");
+    const errorBox = document.getElementById("attendees-edit-error");
+    errorBox.textContent = "";
+    // แถวที่ไม่กรอกชื่อเลยตัดทิ้งเงียบๆ (เช่น กด "+ เพิ่ม" ไว้เฉยๆแล้วไม่ได้กรอก) — position/email
+    // ว่าง = null ตรงกับ AttendeeIn ฝั่ง backend (ไม่บังคับ)
+    const attendees = [...rowsContainer.querySelectorAll(".attendee-edit-row")]
+      .map((row) => ({
+        name: row.querySelector(".attendee-name").value.trim(),
+        position: row.querySelector(".attendee-position").value.trim() || null,
+        email: row.querySelector(".attendee-email").value.trim() || null,
+      }))
+      .filter((a) => a.name);
+
+    btn.disabled = true;
+    btn.textContent = "กำลังบันทึก...";
+    try {
+      const updated = await apiFetch(`/api/meetings/${meeting.id}/attendees`, {
+        method: "PUT",
+        body: { attendees },
+      });
+      Object.assign(meeting, updated);
+      renderParticipantsView(meeting);
+      // Speaker Mapping panel ใช้ attendees เป็น autocomplete datalist (ดู renderSpeakerMapping) —
+      // re-render ถ้ามี transcript แล้วกันชื่อใหม่ไม่โผล่ใน suggestion จนกว่าจะ refresh หน้าเอง
+      if (meeting.transcript_segments && meeting.transcript_segments.length) {
+        renderSpeakerMapping(meeting, document.getElementById("mapping-container"));
+      }
+    } catch (err) {
+      errorBox.textContent = `บันทึกไม่สำเร็จ: ${err.message}`;
+      btn.disabled = false;
+      btn.textContent = "Save";
+    }
+  });
+}
+
+/** เลขวาระ (2026-08-07, ผู้ใช้ขอรองรับ 3.1/3.2/เลขข้ามได้ — ดู backend's
+ * models.py MeetingAgendaItem.label docstring) — รับ {label, description} แทน string ล้วนแบบเดิม
+ * label ปล่อยว่างได้ (backend เติม "วาระที่ N" ให้อัตโนมัติตอน save ถ้าไม่กรอก) */
+function _buildAgendaRow(item) {
+  const label = (item && item.label) || "";
+  const description = (item && item.description) || "";
+  const row = document.createElement("div");
+  row.className = "agenda-edit-row";
+  row.style.cssText = "display: flex; gap: 0.4rem; margin-bottom: 0.4rem;";
+  row.innerHTML = `
+    <input type="text" class="agenda-label" placeholder="เลขวาระ (ไม่บังคับ)" value="${escapeHtml(label)}" style="flex: 0 0 160px;">
+    <input type="text" class="agenda-desc" placeholder="วาระการประชุม" value="${escapeHtml(description)}" style="flex: 1; min-width: 0;">
+    <button class="btn btn-secondary remove-row-btn" type="button" style="flex: 0 0 auto;">&times;</button>
+  `;
+  row.querySelector(".remove-row-btn").addEventListener("click", () => row.remove());
+  return row;
+}
+
+/** แก้ไขวาระการประชุมย้อนหลังได้ (2026-08-07, ผู้ใช้ขอ) — pattern เดียวกับ
+ * renderParticipantsEdit() ด้านบนทุกประการ ลำดับ (order) คำนวณจาก index ตอน save เสมอ (ไม่ให้ผู้ใช้
+ * ลากจัดลำดับเอง — ยังไม่ทำในรอบนี้ กันสโคปบาน) label เป็น free text แยกต่างหาก รองรับเลขวาระย่อย
+ * แบบ 3.1/3.2 หรือเลขข้ามที่ไม่เรียงต่อเนื่องตามธรรมเนียมบอร์ดจริง */
+function renderAgendaEdit(meeting) {
+  const container = document.getElementById("agenda-container");
+  container.innerHTML = `
+    <div id="agenda-rows"></div>
+    <button id="add-agenda-row" class="btn btn-secondary" type="button" style="font-size: 0.8rem; margin: 0.4rem 0;">+ เพิ่มวาระ</button>
+    <div class="flex-between">
+      <button id="save-agenda-btn" class="btn btn-primary">Save</button>
+      <button id="cancel-agenda-btn" class="btn btn-secondary">Cancel</button>
+    </div>
+    <p id="agenda-edit-error" class="text-muted" style="color: var(--status-failed); margin-bottom: 0;"></p>
+  `;
+
+  const rowsContainer = document.getElementById("agenda-rows");
+  const initialRows = meeting.agenda_items.length ? meeting.agenda_items : [{ label: "", description: "" }];
+  initialRows.forEach((item) => rowsContainer.appendChild(_buildAgendaRow(item)));
+
+  document.getElementById("add-agenda-row").addEventListener("click", () => {
+    rowsContainer.appendChild(_buildAgendaRow({ label: "", description: "" }));
+  });
+
+  document.getElementById("cancel-agenda-btn").addEventListener("click", () => {
+    renderAgendaView(meeting);
+  });
+
+  document.getElementById("save-agenda-btn").addEventListener("click", async () => {
+    const btn = document.getElementById("save-agenda-btn");
+    const errorBox = document.getElementById("agenda-edit-error");
+    errorBox.textContent = "";
+    const agenda_items = [...rowsContainer.querySelectorAll(".agenda-edit-row")]
+      .map((row) => ({
+        label: row.querySelector(".agenda-label").value.trim() || null,
+        description: row.querySelector(".agenda-desc").value.trim(),
+      }))
+      .filter((a) => a.description); // แถวที่ไม่กรอก description ตัดทิ้งเงียบๆ เหมือน attendees
+
+    btn.disabled = true;
+    btn.textContent = "กำลังบันทึก...";
+    try {
+      const updated = await apiFetch(`/api/meetings/${meeting.id}/agenda_items`, {
+        method: "PUT",
+        body: { agenda_items },
+      });
+      Object.assign(meeting, updated);
+      renderAgendaView(meeting);
+    } catch (err) {
+      errorBox.textContent = `บันทึกไม่สำเร็จ: ${err.message}`;
+      btn.disabled = false;
+      btn.textContent = "Save";
+    }
+  });
 }
 
 /** "2026-08-03T10:15:00" (UTC naive จาก datetime.utcnow().isoformat() ฝั่ง backend) → แสดงเป็น
@@ -682,7 +926,7 @@ function renderMinutesPanel(meeting) {
   const agendaItemsHtml = m.agenda_items.map((item) => `
     <div class="minutes-agenda-item">
       <p>
-        <strong>วาระที่ ${item.agenda_order + 1}: ${escapeHtml(item.description)}</strong>
+        <strong>${escapeHtml(item.label || `วาระที่ ${item.agenda_order + 1}`)}: ${escapeHtml(item.description)}</strong>
         ${resolutionStatusBadgeHtml(item.resolution_status)}
       </p>
       <p class="text-muted">${escapeHtml(item.discussion_summary)}</p>
@@ -959,6 +1203,7 @@ function renderMainContent(meeting) {
     if (documentsPanel) documentsPanel.style.display = "";
     renderSpeakerMapping(meeting, document.getElementById("mapping-container"));
     renderTranscript(meeting, document.getElementById("transcript-container"));
+    renderTranscriptionModelUsed(meeting);
     renderMinutesPanel(meeting);
     renderDocumentsPanel(meeting);
   } else {
@@ -995,11 +1240,21 @@ async function loadMeetingDetail(meetingId) {
     exportBtn.disabled = !(meeting.transcript_segments && meeting.transcript_segments.length);
   }
   const reuploadBtn = document.getElementById("reupload-audio-btn");
+  const reuploadModelSelect = document.getElementById("reupload-model-select");
   if (reuploadBtn) {
     // แสดงเฉพาะตอน transcribed/failed (มีผลลัพธ์ให้แทนที่แล้ว หรือประมวลผลพังต้องลองใหม่) — ซ่อนตอน
     // draft (ยังไม่มีไฟล์ ใช้ปุ่มปกติจากหน้า dashboard แทน)/uploaded/processing (มีงานค้างอยู่แล้ว
     // กันกดซ้อนจนสับสนว่า process ไหนคือของจริง)
-    reuploadBtn.style.display = (meeting.status === "transcribed" || meeting.status === "failed") ? "" : "none";
+    const showReupload = meeting.status === "transcribed" || meeting.status === "failed";
+    reuploadBtn.style.display = showReupload ? "" : "none";
+    // เลือกโมเดลเอง (2026-08-05) — แสดง/ซ่อนพร้อมปุ่ม reupload เสมอ, populate ครั้งเดียวพอ (เช็ค
+    // .innerHTML ว่างก่อน กัน re-fetch ทุกครั้งที่ loadMeetingDetail() รันซ้ำระหว่าง poll)
+    if (reuploadModelSelect) {
+      reuploadModelSelect.style.display = showReupload ? "" : "none";
+      if (showReupload && !reuploadModelSelect.innerHTML) {
+        getModelOptionsHtml().then((html) => { reuploadModelSelect.innerHTML = html; });
+      }
+    }
   }
   return meeting;
 }
@@ -1047,6 +1302,9 @@ function triggerReuploadOnDetailPage(meetingId, btn) {
     try {
       const form = new FormData();
       form.append("file", input.files[0]);
+      // เลือกโมเดลเอง (2026-08-05) — ดู meeting-detail.html's #reupload-model-select
+      const modelSelect = document.getElementById("reupload-model-select");
+      if (modelSelect && modelSelect.value) form.append("model", modelSelect.value);
       await apiFetch(`/api/meetings/${meetingId}/upload`, { method: "POST", body: form });
       // โหลดสถานะใหม่ทันที (จะเห็น "uploaded" ก่อน background task ประมวลผลเสร็จด้วยซ้ำ — ตรงกับ
       // ที่ renderMainContent ซ่อน panel หลักทั้งหมดรอจนกว่าจะ transcribed ใหม่) แล้วเริ่ม poll ใหม่
@@ -1142,6 +1400,24 @@ function initMeetingDetailPage() {
     reuploadBtn.addEventListener("click", () => triggerReuploadOnDetailPage(meetingId, reuploadBtn));
   }
 
+  // แก้ไข Participants/Agenda ย้อนหลัง (2026-08-07, ผู้ใช้ขอ) — pattern เดียวกับ edit-transcript-btn
+  // ด้านบน: อ่านจาก _detailMeeting ที่โหลดล่าสุดเสมอ ไม่ผูกกับ closure ตอน initial load
+  const editParticipantsBtn = document.getElementById("edit-participants-btn");
+  if (editParticipantsBtn) {
+    editParticipantsBtn.addEventListener("click", () => {
+      if (!_detailMeeting) return;
+      renderParticipantsEdit(_detailMeeting);
+    });
+  }
+
+  const editAgendaBtn = document.getElementById("edit-agenda-btn");
+  if (editAgendaBtn) {
+    editAgendaBtn.addEventListener("click", () => {
+      if (!_detailMeeting) return;
+      renderAgendaEdit(_detailMeeting);
+    });
+  }
+
   // Module 3: Generate Minutes — เรียก Gemini ฝั่ง backend อาจใช้เวลาสักครู่ (ไม่ทราบตัวเลขจริง
   // ยังไม่เคย live test — ดู handoff.md) แสดง label บนปุ่มระหว่างรอ กันผู้ใช้กดซ้ำ/คิดว่าค้าง
   const generateMinutesBtn = document.getElementById("generate-minutes-btn");
@@ -1184,6 +1460,7 @@ function initMeetingDetailPage() {
 let _searchScope = "general"; // "general" | "confidential" — ตรงกับ search_scope ฝั่ง backend/rag.py
 let _searchBusy = false; // กันยิงซ้ำระหว่างรอคำตอบ (query อาจใช้เวลาถึงหลายนาที ไม่ใช่ 2-3 วิ)
 let _searchElapsedTimer = null;
+let _searchMeetingOptionsLoaded = false; // โหลด dropdown รายชื่อการประชุมแค่ครั้งแรกที่สลับมา confidential (ไม่โหลดซ้ำทุกครั้ง)
 
 /** อัปเดต active state ของ scope control ทั้ง 2 ชุด (pill กลางจอ ใช้ได้ทั้ง mobile/desktop, sidebar
  * link ใช้ได้เฉพาะ desktop ที่ sidebar โชว์) ให้ตรงกับ _searchScope เสมอ — เขียนแยก class ของ pill/nav
@@ -1214,9 +1491,45 @@ function updateScopeUI() {
   if (inactiveNav) inactiveNav.classList.add("text-on-surface-variant");
 }
 
+/** โชว์/ซ่อน dropdown เลือกการประชุม — เฉพาะ scope="confidential" เท่านั้น (scope="general" ไม่มี
+ * concept "การประชุม" เลย) โหลดตัวเลือกครั้งแรกที่สลับมา confidential เท่านั้น (ไม่โหลดซ้ำทุกครั้ง
+ * ที่สลับ scope ไปมา — รายชื่อการประชุมที่ approve แล้วไม่ได้เปลี่ยนบ่อยระหว่างอยู่หน้านี้) */
+function updateMeetingFilterVisibility() {
+  const wrap = document.getElementById("search-meeting-filter-wrap");
+  if (!wrap) return;
+  wrap.style.display = _searchScope === "confidential" ? "" : "none";
+  if (_searchScope === "confidential" && !_searchMeetingOptionsLoaded) {
+    loadConfidentialMeetingOptions();
+  }
+}
+
+/** ดึงรายชื่อการประชุมที่ Approve แล้ว (มีเอกสารลับ index ไว้จริง — ดู
+ * backend/main.py's _archive_and_notify_background) มาใส่ dropdown ให้เลือก filter — กรองฝั่ง
+ * client เอา (ไม่มี backend endpoint แยกสำหรับ "Approved only" ยังไม่คุ้มเพิ่ม endpoint ใหม่แค่นี้
+ * GET /api/meetings คืนทุกการประชุมอยู่แล้ว) ล้มเหลวก็แค่ dropdown เหลือแค่ "ทุกการประชุม" เหมือนเดิม
+ * ไม่ block การใช้งานหน้านี้ */
+async function loadConfidentialMeetingOptions() {
+  const select = document.getElementById("search-meeting-select");
+  if (!select) return;
+  _searchMeetingOptionsLoaded = true; // ตั้งก่อนเรียกเสมอ กัน retry ถี่ๆ ถ้า fail (ผู้ใช้ refresh เองได้)
+  try {
+    const meetings = await apiFetch("/api/meetings");
+    const approved = (meetings || []).filter((m) => m.approval_status === "Approved");
+    approved.forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = `${m.meeting_number} (${formatDate(m.meeting_date)})`;
+      select.appendChild(opt);
+    });
+  } catch {
+    // เงียบไว้ — dropdown เหลือแค่ "ทุกการประชุม" ผู้ใช้ยังค้นหาแบบเดิมได้ปกติ
+  }
+}
+
 function setSearchScope(scope) {
   _searchScope = scope;
   updateScopeUI();
+  updateMeetingFilterVisibility();
 }
 
 function appendSearchUserBubble(query) {
@@ -1375,8 +1688,14 @@ async function submitSearchQuery() {
   showSearchLoading();
 
   const endpoint = _searchScope === "confidential" ? "/api/rag/query_confidential" : "/api/rag/query";
+  const body = { query };
+  if (_searchScope === "confidential") {
+    const meetingSelect = document.getElementById("search-meeting-select");
+    const selected = meetingSelect ? meetingSelect.value : "";
+    if (selected) body.meeting_id = selected; // "" (ทุกการประชุม) = ไม่ส่ง field นี้เลย ค้นหาทุกเอกสาร
+  }
   try {
-    const result = await apiFetch(endpoint, { method: "POST", body: { query } });
+    const result = await apiFetch(endpoint, { method: "POST", body });
     hideSearchLoading();
     appendSearchAiBubble(result, false);
   } catch (err) {
@@ -1395,6 +1714,7 @@ function initSearchPage() {
   if (!area) return; // ไม่ใช่หน้านี้
 
   updateScopeUI();
+  updateMeetingFilterVisibility();
 
   document.querySelectorAll("[data-scope]").forEach((el) => {
     el.addEventListener("click", (e) => {

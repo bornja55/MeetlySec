@@ -15,6 +15,11 @@ python-multipart
 # ในโปรเซส backend หลักได้เลย ไม่มี torch/faiss/native extension ที่จะชน Windows WINHTTP.dll
 google-genai
 
+# หมายเหตุ (2026-08-05, audio chunking — ดู audio_chunking.py): ไม่มี Python package ใหม่ เรียก
+# `ffmpeg`/`ffprobe` ผ่าน subprocess ตรงๆ (pattern เดียวกับ audio_worker/ffmpeg_utils.py) —
+# **backend process ต้องมี ffmpeg อยู่ใน PATH ด้วยแล้วตอนนี้** (เดิมมีแค่ audio_worker ที่ต้องใช้
+# ffmpeg — ถ้าเครื่องเคยรัน audio_worker ได้ปกติ แปลว่ามี ffmpeg ใน PATH อยู่แล้ว ไม่ต้องติดตั้งเพิ่ม)
+
 # Module 4 (Word Template Mapping, 2026-08-03): render minutes_json ลง templates/minutes_template.docx
 # ที่มี Jinja tag ฝังอยู่ (ดู build_minutes_template.py/docx_generation.py) — เบา ไม่มี native
 # extension เช่นกัน (pure Python, ใช้ python-docx ที่มีอยู่แล้วเป็น dependency ภายใน)

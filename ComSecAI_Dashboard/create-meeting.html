@@ -65,8 +65,11 @@
 
         <div class="form-group mt-4">
           <label>Meeting Agenda</label>
+          <!-- เลขวาระ (2026-08-07, ผู้ใช้ขอ) — ช่อง label แยกจาก description พิมพ์อะไรก็ได้ (3.1,
+               3.2, เรื่องที่ 5 ฯลฯ) ปล่อยว่าง = backend เติม "วาระที่ {ลำดับ}" ให้อัตโนมัติ -->
           <div id="agenda-container">
             <div class="agenda-row" style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+              <input type="text" class="agenda-label" placeholder="เลขวาระ (ไม่บังคับ)" style="width: 160px;">
               <input type="text" class="agenda-item" placeholder="Agenda item" style="flex: 1;">
               <button type="button" class="btn btn-secondary remove-row-btn" style="color: var(--status-failed); border-color: var(--status-failed);">Remove</button>
             </div>

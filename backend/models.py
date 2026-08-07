@@ -91,9 +91,19 @@ class Meeting(Base):
     audio_filename: Mapped[str | None] = mapped_column(String, nullable=True)
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # ผลดิบจาก audio_worker — list ของ {start, end, speaker, text} ต่อ segment (JSON) — ดู warning
-    # ที่หัวไฟล์เรื่องยังไม่ normalize เป็นตารางแยก
+    # ผลดิบจาก audio_worker (เดิม)/Gemini native audio (ปัจจุบัน, ดู audio_native.py) — list ของ
+    # {start, end, speaker, text} ต่อ segment (JSON) — ดู warning ที่หัวไฟล์เรื่องยังไม่ normalize
+    # เป็นตารางแยก
     transcript_segments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ชื่อโมเดล Gemini ที่ transcribe สำเร็จจริงต่อการประมวลผลรอบล่าสุด (2026-08-05, ผู้ใช้ขอให้
+    # บันทึกไว้ให้เห็นทุกที่ — เดิมรู้ได้แค่จาก backend terminal log ของ run_with_fallback เท่านั้น
+    # ("[TRANSCRIBE] สำเร็จ...(โมเดล: ...)") ไม่มีที่เก็บถาวรต่อ meeting เลย) — ค่าเป็น primary
+    # (`config.GEMINI_MODEL_TRANSCRIPTION`, ปกติ "gemini-3.6-flash") หรือ fallback
+    # (`config.GEMINI_MODEL_TRANSCRIPTION_FALLBACK`, ปกติ "gemini-3.5-flash") แล้วแต่ตัวไหนสำเร็จ —
+    # None ถ้ายังไม่เคยประมวลผลสำเร็จ (draft/uploaded/processing/failed) เขียนทับด้วยค่าล่าสุดเสมอถ้า
+    # reprocess ซ้ำ (ตรงกับ pattern JSON blob อื่นของโปรเจกต์นี้ที่ไม่เก็บ history หลายรอบ)
+    transcription_model_used: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Speaker Mapping (บังคับ, ตัดสินใจจาก `/grill-me` รอบ 3, ดู handoff.md) — dict JSON
     # {"SPEAKER_00": "ชื่อจริง", ...} จับคู่ speaker label จาก diarization เข้ากับชื่อคน ก่อนอนุญาต
@@ -171,6 +181,13 @@ class MeetingAgendaItem(Base):
     meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id"), nullable=False)
     order: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    # เลขวาระที่โชว์จริงในเอกสาร (2026-08-07, ผู้ใช้ขอ — วาระประชุมบอร์ดจริงมักไม่เรียงต่อเนื่อง 1,2,3
+    # เสมอไป เช่น 3.1/3.2 เป็นวาระย่อย หรือข้ามเลขตามธรรมเนียมเดิมของบริษัท) แยกออกจาก `order` ที่ยังใช้
+    # ควบคุมลำดับจริงใน DB + จับคู่ผลลัพธ์จาก Gemini เหมือนเดิมทุกประการ (ดู minutes_generation.py) —
+    # `label` เป็น free text ล้วนๆ ที่ผู้ใช้พิมพ์เองได้เต็มที่ (เช่น "วาระที่ 3.1", "เรื่องที่ 5") ไม่มี
+    # การเติม prefix "วาระที่" ให้อัตโนมัติที่ template อีกต่อไป — nullable เพราะข้อมูลเก่าก่อนมี field
+    # นี้ยังไม่มีค่า (main.py/docx_generation.py fallback เป็น "วาระที่ {order+1}" ถ้าเป็น None/ว่าง)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
 
     meeting: Mapped["Meeting"] = relationship(back_populates="agenda_items")
 

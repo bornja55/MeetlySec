@@ -1,0 +1,12 @@
+{
+  "model": "gemini-2.5-flash-lite",
+  "model_used_confirmed": null,
+  "success": false,
+  "elapsed_seconds": 190.7,
+  "segment_count": 0,
+  "total_chars": 0,
+  "speaker_count": 0,
+  "speakers": [],
+  "segments": [],
+  "error": "เรียก Gemini ไม่สำเร็จทุก model: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}"
+}

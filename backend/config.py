@@ -56,14 +56,86 @@ GEMINI_MINUTES_TIMEOUT_MS = int(os.environ.get("GEMINI_MINUTES_TIMEOUT_MS", str(
 # นับได้ 6 speaker ทั้งที่จริงมีแค่ ~4-5 คน) — ยืนยันว่า 3.6-flash เสถียรกว่าทั้ง rate-limit และความ
 # สม่ำเสมอของ label ให้ fallback ไป 3.5-flash เฉพาะตอน 3.6-flash เต็มโควต้าเท่านั้น
 GEMINI_MODEL_TRANSCRIPTION = os.environ.get("GEMINI_MODEL_TRANSCRIPTION", "gemini-3.6-flash")
+# ⚠️ ขยายจาก 1 โมเดล (`gemini-3.5-flash` เดิม) เป็น 3 โมเดล (2026-08-05, session 3.32) — ที่มา:
+# ผู้ใช้ทดสอบจริงเจอ primary (`gemini-3.6-flash`) โดน 503 "high demand" ชั่วคราวกลางไฟล์ยาว 11 chunk —
+# fallback เดียวไม่พอถ้า Google มีปัญหา capacity ชั่วคราวกระทบหลายโมเดลพร้อมกัน (คนละประเด็นกับ "โมเดล
+# ไหนดีที่สุด" ที่ปิดเรื่องไปแล้วใน session 3.30 — นี่คือเรื่อง redundancy ล้วนๆ) เลือก 2 ตัวเพิ่ม
+# (`gemini-3.5-flash-lite`, `gemini-2.5-flash`) จากผลจริงใน `model_comparison_results/batch_drift_summary.csv`
+# (session 3.28-3.29): ทั้งคู่เรียกได้จริงสำเร็จ 2/3 และ 3/3 ไฟล์ทดสอบตามลำดับ — **ตั้งใจไม่ใส่
+# `gemini-3.1-flash-lite`** (undershoot สม่ำเสมอทุกไฟล์ที่ทดสอบ + speaker count คงที่ 2 คนน่าสงสัยว่า
+# under-diarize) และ **ไม่ใส่ `gemini-2.5-flash-lite`** (fail คนละแบบทุกครั้งในผลจริง 3 ไฟล์ — 503 x2,
+# "ไม่คืน structured output" x1 — ไม่เสถียรพอจะเป็น fallback)
+#
+# ผลกระทบต่อ speaker label consistency ข้าม chunk (ผู้ใช้ถามตรงๆ ก่อนอนุมัติ — ตอบด้วยข้อมูลจริงจากโค้ด
+# ไม่เดา): `_speaker_context_prompt()` ใน audio_native.py ส่ง label ที่เจอมาก่อนหน้าเป็น **prompt
+# ข้อความล้วนๆ** ให้ chunk ถัดไป ไม่ว่า chunk ถัดไปจะใช้โมเดลเดิมหรือโมเดลสำรองที่ fallback มาก็ได้ hint
+# เดียวกันเป๊ะ (ไม่มีช่องทางพิเศษที่จะขาดหายเฉพาะตอนสลับโมเดล — กลไกนี้ไม่เคยส่งบริบทเสียงจริงข้าม chunk
+# อยู่แล้วตั้งแต่ก่อนมี fallback หลายตัว มีแค่ text hint นี้เท่านั้น ดู docstring เดิมของฟังก์ชันนั้น) —
+# ความเสี่ยง "โมเดลจำเสียงคนเดิมไม่ได้" มีอยู่แล้วเท่ากันไม่ว่าจะมี fallback 1 หรือ 3 ตัว (แค่โอกาสเจอ
+# มากขึ้นเพราะมี fallback ให้สลับได้บ่อยขึ้นเท่านั้น ไม่ใช่ความเสี่ยง class ใหม่ที่ขยายนี้สร้างขึ้น)
 GEMINI_MODEL_TRANSCRIPTION_FALLBACK = _parse_model_chain(
-    os.environ.get("GEMINI_MODEL_TRANSCRIPTION_FALLBACK", "gemini-3.5-flash")
+    os.environ.get(
+        "GEMINI_MODEL_TRANSCRIPTION_FALLBACK",
+        "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-2.5-flash",
+    )
 )
 # ไฟล์เสียงยาวกว่า text มาก ต้อง timeout นานกว่า GEMINI_MINUTES_TIMEOUT_MS — ตั้ง 15 นาทีไปก่อน
 # (ยังไม่มีตัวเลข latency จริง ต้องวัดจากการทดลองจริงก่อน)
 GEMINI_TRANSCRIPTION_TIMEOUT_MS = int(
     os.environ.get("GEMINI_TRANSCRIPTION_TIMEOUT_MS", str(15 * 60 * 1000))
 )
+
+# ── เลือกโมเดล Gemini เองตอน upload/re-upload (2026-08-05, ผู้ใช้ขอ) ────────────────────────
+# ที่มา: audio chunking (ดูด้านบน) ทำให้ 1 meeting ยาวเรียก Gemini หลาย request (1 ต่อ chunk) แทนที่
+# จะเป็น 1 request/meeting เหมือนก่อนหน้า — ผู้ใช้เจอ RPD (requests/day) ของ `gemini-3.6-flash` บน
+# ฟรีเทียร์ใกล้เต็ม (16/20 จาก screenshot Google AI Studio) ขณะที่โมเดลอื่นแทบไม่ได้ใช้เลย (0/20,
+# 0/500 เป็นต้น) — เปิดให้เลือกโมเดลเองตอน upload/re-upload แทนที่จะพึ่ง
+# GEMINI_MODEL_TRANSCRIPTION+FALLBACK อย่างเดียว **ลำดับตามที่ผู้ใช้ระบุเอง** (ไม่ใช่ลำดับ version
+# number ตรงๆ — เรียงจากที่อยากให้เป็นตัวเลือกแรกสุดไปหลังสุด) ดู `GET /api/transcription_models`
+# (main.py) สำหรับ endpoint ที่ frontend ใช้ populate dropdown (mirror pattern เดียวกับ
+# `docx_generation.TEMPLATE_REGISTRY`/`list_templates()`) — ค่า key ต้องตรงกับชื่อโมเดลจริงของ
+# Gemini API เป๊ะ
+#
+# ⚠️ **อัปเดต (2026-08-05, session 3.27)**: รัน `scripts/compare_transcription_models.py` จริงกับไฟล์
+# ทดสอบ 10 นาที (ดู handoff.md 3.26 สำหรับผลเต็ม) ยืนยันสถานะจริงแล้ว: `gemini-3.6-flash`/
+# `gemini-3.5-flash`/`gemini-3.5-flash-lite`/`gemini-3.1-flash-lite`/`gemini-2.5-flash` เรียกได้จริง
+# ทั้งหมด — **`gemini-3.1-flash` ไม่มีอยู่จริง** (API คืน 404 NOT_FOUND) ลองแก้เป็น `gemini-3-flash`
+# ตามที่ผู้ใช้บอก (session 3.27) — **ก็ยังคง 404 อยู่ดี** (ยืนยันจากผลทดสอบ batch จริง session 3.28)
+# ⚠️ **แก้จริงแล้ว (2026-08-05, session 3.30)**: ค้นตาราง endpoint จริงจาก official docs
+# (ai.google.dev/gemini-api/docs/models, อัปเดต 2026-08-04) พบว่า "Gemini 3 Flash" เป็น **Preview**
+# model (ไม่ใช่ Stable เหมือน 3.6/3.5 Flash) ต้องมี suffix `-preview` เสมอ — ชื่อที่ถูกต้องจริงคือ
+# `gemini-3-flash-preview` — **ยังไม่เคย verify เรียกได้จริงผ่าน google-genai SDK อีกรอบ** (แก้ตาม
+# เอกสารทางการ ยังไม่ได้ทดสอบยิงจริง) `gemini-2.5-flash-lite` เจอ fail ต่อเนื่องหลายแบบ (503 x2,
+# "ไม่คืน structured output" x1) ใน batch test จริง — ดูไม่เสถียร ควรพิจารณาตัดออกถ้ายัง fail ต่อ —
+# ถ้าชื่อผิด/โมเดลไม่มีจริง `run_with_fallback`/`_transcribe_one_file` จะ raise error ชัดเจน ไม่ silent
+# fail
+GEMINI_TRANSCRIPTION_MODEL_CHOICES = [
+    ("gemini-3.6-flash", "Gemini 3.6 Flash"),
+    ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+    ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
+    ("gemini-3-flash-preview", "Gemini 3 Flash"),
+    ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"),
+    ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+    ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite"),
+]
+
+# ── Audio chunking (2026-08-05, แก้ปัญหา timestamp drift ตามสัดส่วน — ดู handoff.md 3.19/3.21) ──
+# พบว่ายิ่งไฟล์เสียงยาวเท่าไหร่ ยิ่งส่งทีเดียวทั้งไฟล์ Gemini ยิ่งประมาณ timestamp คลาดสะสมมาก (ไฟล์
+# 55 นาทีที่ทดสอบจริงคลาดท้ายไฟล์เกือบ 38 นาที) — ค้นข้อมูลแล้วพบว่าเป็น pattern ที่หลายทีมอิสระเจอ
+# ตรงกัน (Towards Data Science's production pipeline, pyvideotrans issue #624,
+# madeyexz/youtube2transcripts เป็นต้น) วิธีแก้ที่ตรงกันทุกแหล่ง: ตัดไฟล์เป็นชิ้นสั้นๆก่อนส่ง Gemini
+# แล้วคำนวณ timestamp จริงเองจาก offset ของ chunk ในไฟล์ต้นฉบับ (ไม่เชื่อ timestamp สัมบูรณ์ที่ Gemini
+# รายงานเองสำหรับไฟล์ยาว — เชื่อได้แค่ timestamp สัมพัทธ์ภายใน chunk สั้นๆ) ดู audio_chunking.py
+#
+# ขนาด chunk: TDS's production pipeline พบว่าคุณภาพ/timestamp เริ่มเสื่อมชัดราวนาทีที่ 15-20 ของการส่ง
+# ทีเดียว เลือก 10 นาทีให้มีระยะเผื่อ (ตรงกับที่ TDS ใช้จริงเช่นกัน) ไฟล์สั้นกว่า chunk เดียวไม่ต้องตัด
+# เลย (คงพฤติกรรมเดิม ไม่มี overhead เพิ่ม)
+AUDIO_CHUNK_SECONDS = int(os.environ.get("AUDIO_CHUNK_SECONDS", str(10 * 60)))
+# overlap กันเนื้อหาขาดหายตรงรอยตัด (เจอปัญหานี้แยกต่างหากมาก่อนแล้วใน session 3.17 — omission
+# 13:46-16:48 — overlap นี้น่าจะช่วยลดความเสี่ยงเดียวกันนี้ด้วย แม้จะแก้คนละปัญหากันโดยตรง) TDS ใช้ 30
+# วินาทีแล้วพบว่าพอสำหรับให้ LLM merge จับประโยคเต็มได้ (เราไม่ได้ทำ LLM merge แต่ใช้ midpoint cut
+# แทน — ดู audio_chunking.py's merge_chunk_segments() สำหรับเหตุผลที่เลือกทางง่ายกว่า)
+AUDIO_CHUNK_OVERLAP_SECONDS = int(os.environ.get("AUDIO_CHUNK_OVERLAP_SECONDS", "30"))
 
 # ── Module 4: Word Template Mapping ─────────────────────────────────────────────────────
 # ที่อยู่บริษัทที่จะโชว์ในเอกสาร .docx ที่ AI ร่าง (ดู docx_generation.py) — ไม่มีใน minutes_json
@@ -93,3 +165,14 @@ MAGIC_LINK_EXPIRY_HOURS = int(os.environ.get("MAGIC_LINK_EXPIRY_HOURS", "168")) 
 # เองก่อนขึ้นใช้งานจริง ตอนนี้ยังไม่มีค่าให้ทดสอบ)
 ARCHIVE_DOCUMENTS_DESTINATION = os.environ.get("ARCHIVE_DOCUMENTS_DESTINATION", "")
 ARCHIVE_RECORDINGS_DESTINATION = os.environ.get("ARCHIVE_RECORDINGS_DESTINATION", "")
+
+# ── ต่อสาย Approve → Confidential RAG index (2026-08-07) ───────────────────────────────
+# ดีฟอลต์ชี้ไปที่ rag_worker/confidential_corpus/ ข้างๆ backend/ นี้ (../rag_worker/confidential_corpus
+# — เหมือน worker_config.py's CONFIDENTIAL_CORPUS_DIR = BASE_DIR/confidential_corpus ที่ BASE_DIR
+# คือ rag_worker/) backend เขียนไฟล์ .docx ที่ Approve แล้วลงตรงนี้เอง (ไม่ผ่าน worker) แล้วค่อยยิง
+# HTTP ไปสั่ง worker rebuild ดัชนีจากโฟลเดอร์นี้อีกที (ดู _archive_and_notify_background) — override
+# ผ่าน .env ได้ถ้าโครงสร้างโฟลเดอร์เปลี่ยนในอนาคต ต้องตรงกับ rag_worker's worker_config.py เสมอ
+RAG_WORKER_CONFIDENTIAL_CORPUS_DIR = os.environ.get(
+    "RAG_WORKER_CONFIDENTIAL_CORPUS_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rag_worker", "confidential_corpus"),
+)

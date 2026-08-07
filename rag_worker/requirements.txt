@@ -1,6 +1,26 @@
 # Com Sec RAG Worker — โปรเซสแยกต่างหาก (ดู main.py docstring สำหรับเหตุผลสถาปัตยกรรม)
-# ตัด streamlit/pandas/openpyxl/docx2txt ออกจาก requirements.txt ต้นฉบับของ Local RAG เพราะ
-# ไม่ใช้ (ไม่มี UI ในโปรเซสนี้ ไม่มี document-conversion tooling — Local RAG มีของตัวเองแยกอยู่แล้ว)
+# ตัด streamlit/pandas/openpyxl ออกจาก requirements.txt ต้นฉบับของ Local RAG เพราะไม่ใช้ (ไม่มี UI
+# ในโปรเซสนี้)
+#
+# **docx2txt กลับมาแล้ว (2026-08-07)** — เดิมตัดออกด้วยเพราะตอนนั้น rag_worker ไม่เคยอ่านไฟล์ .docx
+# ตรงๆ เลย (โหลดแต่ FAISS index ที่ build ไว้ล่วงหน้าจาก storage/ เท่านั้น Local RAG เองก็ pre-convert
+# เป็น .txt ก่อนด้วยสคริปต์แยกของตัวเอง ไม่เคยยื่น .docx ให้ SimpleDirectoryReader ตรงๆ) — พอเพิ่ม
+# `confidential_rag.py::rebuild_index_from_corpus()` (session 3.36) ที่ยื่นไฟล์ .docx (BOD minutes ที่
+# Approve แล้ว) เข้า `SimpleDirectoryReader` ตรงๆ เป็นครั้งแรก ได้ข้อความอ่านไม่ออก (garbled/binary)
+# เข้าไปสร้างดัชนีจริง — พบจาก live test ผู้ใช้ (Policy Search หน้าเอกสารบอร์ด (ลับ) คืน sources เป็น
+# ตัวอักษรมั่วทั้งหมด)
+#
+# **แก้ไขการวินิจฉัย (2026-08-07, session 3.39)**: ตอน session 3.37 เข้าใจผิดว่าขาดแค่ `docx2txt`
+# เพียงอย่างเดียว — ติดตั้ง `docx2txt` แล้วปัญหา**ไม่หาย** ไล่จริงพบว่า `docx2txt.process()` เรียกตรงๆ
+# อ่านไฟล์ได้ปกติ (ภาษาไทยอ่านออกครบ) แต่ `SimpleDirectoryReader` ยังคืนค่าเป็น raw ZIP bytes
+# (`PK\x03\x04...` — .docx คือไฟล์ ZIP จริงๆ) แปลว่า llama_index **ไม่เคยเรียก `DocxReader` เลย** ตัว
+# `DocxReader` เองไม่ได้อยู่ใน `llama-index-core` ตั้งแต่ llama_index แยก package เป็น
+# `llama-index-readers-file` (v0.10+) — ไม่มี package นี้ = ไม่มี `.docx`/`.pdf` (แบบ non-simple)/ฯลฯ
+# reader เฉพาะทางให้เลือกใช้เลยตั้งแต่ต้น ไม่เกี่ยวกับ `docx2txt` โดยตรง (`docx2txt` เป็นแค่
+# dependency ที่ `DocxReader` เรียกใช้ *ถ้ามันถูกโหลดขึ้นมาได้ก่อน*) — ดู handoff.md session 3.39
+# สำหรับ diagnostic เต็ม
+docx2txt
+llama-index-readers-file
 
 # -- HTTP layer --
 fastapi

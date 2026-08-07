@@ -37,6 +37,27 @@ def init_db() -> None:
     import models  # noqa: F401 — ต้อง import ให้ SQLAlchemy เห็น model classes ก่อน create_all
 
     Base.metadata.create_all(bind=engine)
+    _migrate_add_missing_columns()
+
+
+def _migrate_add_missing_columns() -> None:
+    """MVP เท่านั้น ไม่มี Alembic (ดู docstring หัวไฟล์) — `create_all()` สร้างตารางใหม่ให้เท่านั้น
+    **ไม่เพิ่มคอลัมน์ใหม่ให้ตารางที่มีอยู่แล้ว** (SQLite/SQLAlchemy ทำงานแบบนี้เป็นปกติ) ถ้าเพิ่ม field
+    ใหม่ใน models.py ตรงๆแล้วมี DB เก่าอยู่แล้ว (`com_sec.db` มี meeting จริงอยู่แล้ว — เจอกรณีนี้จริง
+    2026-08-07 ตอนเพิ่ม `MeetingAgendaItem.label`) query จะ error ทันทีว่าไม่มีคอลัมน์นี้ — เพิ่ม migration
+    เบาที่สุดเท่าที่จำเป็น: เช็ค `PRAGMA table_info` ก่อนว่ามีคอลัมน์แล้วหรือยัง (กัน error "duplicate
+    column" ถ้ารันซ้ำ/DB สร้างใหม่ที่มีคอลัมน์อยู่แล้วจาก `create_all()`) ถ้ายังไม่มีค่อย `ALTER TABLE
+    ... ADD COLUMN` เพิ่มรายการใน `_COLUMN_MIGRATIONS` ทุกครั้งที่เพิ่ม field ใหม่ในอนาคต (nullable
+    เท่านั้น — SQLite `ADD COLUMN` ใส่ `NOT NULL` ไม่ได้ถ้าไม่มี default)"""
+    _COLUMN_MIGRATIONS = [
+        ("meeting_agenda_items", "label", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in _COLUMN_MIGRATIONS:
+            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                conn.commit()
 
 
 def get_db():

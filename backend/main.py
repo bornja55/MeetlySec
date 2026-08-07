@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import os
 import secrets
+import shutil
 from typing import Literal
 
 import archive
@@ -12,12 +13,12 @@ import docx_generation
 import email_service
 import magic_link
 import pdf_generation
-from audio import AudioWorkerBusyError, AudioWorkerError, audio_pipeline
+from audio_native import AudioNativeError, transcribe_meeting_audio
 from auth import require_role, require_role_for_audio_stream, verify_azure_ad_token
 from db import get_db, init_db
 from docx_generation import DocxGenerationError
 from email_service import EmailSendError
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from magic_link import MagicLinkError
@@ -25,10 +26,24 @@ from minutes_generation import MinutesGenerationError, generate_minutes
 from models import Meeting, MeetingAgendaItem, MeetingApprovalLog, MeetingAttendee
 from pdf_generation import PdfGenerationError
 from pydantic import BaseModel
-from rag import RAGWorkerError, rag_pipeline
+from rag import RAGWorkerError, rag_pipeline, trigger_confidential_index_rebuild
 from sqlalchemy.orm import Session
 
+# ⚠️ พบบั๊กจริง (2026-08-05): `getLogger()` เฉยๆไม่พอ — Python root logger ดีฟอลต์ level เป็น
+# WARNING ไม่มี handler ผูกไว้เลย ทำให้ log.info(...) ที่ใช้ทั่วทั้งไฟล์นี้ (upload/poll progress ใน
+# audio_native.py ที่รับ callable นี้เข้าไป, "[TRANSCRIBE-DONE]" summary) ถูกตัดทิ้งเงียบๆมาตลอด
+# ไม่เคยโชว์ในเทอร์มินอลเลยสักบรรทัด — ผู้ใช้เห็นแต่ "INFO: 127.0.0.1:... GET ..." ซึ่งเป็นของ
+# uvicorn's access logger เอง (คนละ logger ที่ config มาให้แล้ว) ไม่ใช่ log ของแอปนี้ — แก้โดย
+# ผูก StreamHandler + ตั้ง level=INFO ให้ logger นี้โดยตรง (ไม่พึ่ง logging.basicConfig() ที่อาจเป็น
+# no-op เงียบๆถ้า uvicorn ผูก handler ให้ root loggerไปก่อนแล้วตามลำดับ import) ปิด propagate กัน
+# log ซ้ำ 2 บรรทัดถ้า root logger มี handler อยู่แล้วเหมือนกัน
 log = logging.getLogger("com_sec.main")
+log.setLevel(logging.INFO)
+if not log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    log.addHandler(_handler)
+    log.propagate = False
 
 app = FastAPI(
     title="Company Secretary AI System - API",
@@ -40,6 +55,59 @@ app = FastAPI(
 # uvicorn main:app เดียว ไม่มีหลาย entrypoint ให้ต้องแยก event hook) ดู db.py's docstring
 # เรื่อง Alembic migration ที่ยังไม่ทำ (MVP เท่านั้น)
 init_db()
+
+
+def _recover_stuck_processing_meetings() -> None:
+    """⚠️ พบบั๊กจริง (2026-08-05): meeting ที่ `status="processing"` ตอน backend เพิ่งเริ่มโปรเซสใหม่
+    **เป็นไปไม่ได้ที่จะยังประมวลผลอยู่จริง** เพราะ background task ที่ถืองานนั้นผูกกับ process เดิมที่
+    ตายไปแล้ว (FastAPI `BackgroundTasks` ไม่ persist ข้าม restart — ทั้ง Gemini native audio ตอนนี้
+    และ `audio_worker` เดิมมีช่องโหว่นี้เหมือนกัน) ผู้ใช้เจอเคสจริง: restart backend ระหว่างมี meeting
+    กำลังประมวลผลอยู่ → ค้าง "processing" ตลอดกาล → `app.js`'s `actionCellHtml()` ไม่โชว์ปุ่ม
+    Upload/Re-upload ให้เลย (โชว์เฉพาะสถานะ `draft`/`failed`) → อัปโหลดไฟล์ใหม่เข้า meeting นั้นไม่ได้
+    อีกเลยจนกว่าจะแก้ DB เอง — ตรงกับ `/scrutinize` finding เดิมที่บันทึกไว้แล้วใน task.md ("ไม่มี
+    timeout/watchdog ถ้า diarization/ASR ค้าง") เรียกครั้งเดียวตอน startup (หลัง `init_db()`) —
+    auto-mark meeting ที่ค้างเป็น "failed" พร้อมข้อความอธิบายชัดเจน ให้ปุ่ม Re-upload กลับมาทันที
+    โดยไม่ต้องแก้ DB เอง — ไม่ใช่ watchdog เต็มรูปแบบ (ยังไม่จับกรณี backend ไม่ได้ restart แต่
+    background task ค้างจริงๆ เช่น Gemini ไม่ตอบเลย — ยังต้องพึ่ง GEMINI_TRANSCRIPTION_TIMEOUT_MS
+    เดิมสำหรับกรณีนั้น) แค่ปิดช่องโหว่เฉพาะกรณี "ค้างเพราะ restart" ที่เจอจริงรอบนี้
+
+    ⚠️ ขยายเพิ่ม (2026-08-05, พบระหว่าง /scrutinize รอบนี้เอง — ยังไม่มีผู้ใช้รายงานจริง แต่ตรรกะ
+    เดียวกันทุกประการ): `status="uploaded"` ก็ค้างตลอดกาลได้ด้วยเหตุผลเดียวกัน — ถ้า backend
+    restart/reload ในช่วงสั้นๆ ระหว่าง `upload_meeting_audio()` commit สถานะ "uploaded" กับตอนที่
+    `BackgroundTasks` เพิ่ง dispatch งานจริง (Starlette รันหลังส่ง response แล้ว) ตัว background
+    task จะไม่มีวันเริ่มทำงานเลย และ `app.js` ก็ไม่มีปุ่ม re-upload ให้ตอน "uploaded" เช่นกัน
+    (`meeting-detail.html`'s reuploadBtn โชว์เฉพาะ transcribed/failed — ดู app.js:1017) ทำให้ค้างที่
+    placeholder "อัปโหลดไฟล์แล้ว รอเริ่มประมวลผล..." ตลอดกาลเหมือนกัน ตรรกะการ recover เหมือนกันทุก
+    ประการกับ "processing": ตอน backend เพิ่ง start ใหม่ เป็นไปไม่ได้ที่ background task จะยังไม่ถูก
+    dispatch จริงๆ (ไม่มี request ใดๆเข้ามาได้ก่อนบรรทัดนี้รันเสร็จ) จึงปลอดภัยที่จะรวมไว้ด้วยกัน"""
+    from db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        stuck = (
+            db.query(Meeting)
+            .filter(Meeting.status.in_(["processing", "uploaded"]))
+            .all()
+        )
+        for meeting in stuck:
+            meeting.status = "failed"
+            meeting.processing_error = (
+                "ประมวลผลถูกขัดจังหวะเพราะ backend restart กลางทาง — background task ที่ถืองานนี้"
+                "ถูกฆ่าไปพร้อม process เดิม ไม่เกี่ยวกับไฟล์เสียงเสียหรือ Gemini error ใดๆ "
+                "กด Re-upload ได้เลย"
+            )
+        if stuck:
+            db.commit()
+            log.warning(
+                f"พบ {len(stuck)} meeting ค้างสถานะ 'processing'/'uploaded' จาก backend รอบก่อน "
+                f"(ids: {[m.id for m in stuck]}) — ตั้งเป็น 'failed' อัตโนมัติแล้ว ให้ผู้ใช้ "
+                f"re-upload ใหม่ได้"
+            )
+    finally:
+        db.close()
+
+
+_recover_stuck_processing_meetings()
 
 # role ที่มีสิทธิ์สร้าง/อัปโหลดไฟล์เสียงการประชุม — ใช้ชุดเดียวกับ /api/rag/query_confidential
 # (Com_Sec_Maker/Checker คือคนทำงานจริง, Global_Admin ได้สิทธิ์ทุก role อยู่แล้วจาก require_role())
@@ -62,6 +130,9 @@ else:
 
 class QueryBody(BaseModel):
     query: str
+    # session 3.37 — เฉพาะ /api/rag/query_confidential เท่านั้นที่ใช้ (ทั่วไปไม่มี concept การประชุม)
+    # ไม่ระบุ/None = ค้นหาทุกเอกสารลับเหมือนเดิม (backward compatible กับ frontend เก่าที่ยังไม่ส่ง)
+    meeting_id: str | int | None = None
 
 
 @app.get("/")
@@ -99,6 +170,7 @@ def query_confidential(
     try:
         result = rag_pipeline.query(
             body.query, user_id=user["user_id"], search_scope="confidential", role=user["role"],
+            meeting_id=body.meeting_id,
         )
     except RAGWorkerError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -106,11 +178,12 @@ def query_confidential(
 
 # ────────────────────────────────────────────────────────────────────────────────────────
 # Module 2: Meeting entity + upload — สร้าง "การประชุม" ก่อนอัปโหลดไฟล์เสียงเสมอ (ตัดสินใจ
-# `/grill-me` รอบ 3, ดู task.md Module 2) ประมวลผลเสียงเรียก audio_worker (โปรเซสแยก, ดู audio.py)
-# ผ่าน FastAPI BackgroundTasks — คนละเรื่องกับ "audio_worker เป็นโปรเซสแยก" (นั่นคือที่ๆ งานหนัก
-# GPU รันจริง) ส่วน BackgroundTasks ที่นี่แค่ทำให้ HTTP response ของ /upload ไม่ต้องรอจนประมวลผล
-# เสร็จ (อาจนานหลายสิบนาทีถึงชั่วโมงสำหรับประชุมยาว) — client poll สถานะผ่าน GET /api/meetings/{id}
-# แทน
+# `/grill-me` รอบ 3, ดู task.md Module 2) ประมวลผลเสียงเรียก Gemini native audio ตรงจากโปรเซสนี้เอง
+# ผ่าน `audio_native.transcribe_meeting_audio()` (เดิมเรียก `audio_worker` โปรเซสแยกผ่าน `audio.py`
+# — แทนที่แล้วตามการตัดสินใจ `/grill-me` 2026-08-04, ดู `audio_native.py`'s docstring สำหรับเหตุผล
+# สถาปัตยกรรมเต็ม + task.md บรรทัด 164-191) ผ่าน FastAPI BackgroundTasks เพื่อให้ HTTP response ของ
+# /upload ไม่ต้องรอจนประมวลผลเสร็จ (อาจนานหลายสิบวินาทีถึงหลายนาทีสำหรับประชุมยาว) — client poll
+# สถานะผ่าน GET /api/meetings/{id} แทน
 # ────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -122,14 +195,34 @@ class AttendeeIn(BaseModel):
     email: str | None = None
 
 
+class AgendaItemIn(BaseModel):
+    # เลขวาระที่โชว์จริงในเอกสาร (2026-08-07, ผู้ใช้ขอ — ดู models.py's MeetingAgendaItem.label
+    # docstring) ปล่อยว่าง/ไม่ส่งมา = ให้ backend เติม "วาระที่ {ลำดับ}" อัตโนมัติ (ดูจุดที่ใช้ค่านี้ใน
+    # create_meeting()/update_meeting_agenda_items() ด้านล่าง) พิมพ์เองได้เต็มที่ไม่จำกัดรูปแบบ (เช่น
+    # "วาระที่ 3.1", "เรื่องที่ 5") — ไม่ validate รูปแบบใดๆ เป็น free text ล้วน
+    label: str | None = None
+    description: str
+
+
 class MeetingCreateBody(BaseModel):
     meeting_number: str  # เช่น "15/2569" ตรงกับชื่อไฟล์ template
     meeting_date: datetime.date
     attendees: list[AttendeeIn] = []
-    agenda_items: list[str] = []
+    agenda_items: list[AgendaItemIn] = []
     # Multi-template (2026-08-03) — ชื่อ key ใน docx_generation.TEMPLATE_REGISTRY เลือกตอนสร้าง
     # การประชุม (ดู GET /api/templates ด้านล่างสำหรับรายการที่ frontend ใช้ populate dropdown)
     template_name: str = docx_generation.DEFAULT_TEMPLATE_NAME
+
+
+def _build_agenda_items(items_in: list[AgendaItemIn]) -> list[MeetingAgendaItem]:
+    """แปลง `AgendaItemIn` (จาก request body) เป็น `MeetingAgendaItem` ORM object พร้อม default
+    `label` ถ้าผู้ใช้ไม่กรอก — ใช้ร่วมกันทั้ง `create_meeting()`/`update_meeting_agenda_items()` กัน
+    ตรรกะ default diverge กัน (เคยเจอปัญหานี้มาแล้วกับ `_is_speaker_mapping_complete()`)"""
+    result = []
+    for i, item in enumerate(items_in):
+        label = item.label.strip() if item.label and item.label.strip() else f"วาระที่ {i + 1}"
+        result.append(MeetingAgendaItem(order=i, label=label, description=item.description))
+    return result
 
 
 @app.get("/api/templates")
@@ -180,10 +273,16 @@ def _meeting_to_dict(meeting: Meeting) -> dict:
         "status": meeting.status,
         "audio_filename": meeting.audio_filename,
         "processing_error": meeting.processing_error,
+        # ชื่อโมเดล Gemini ที่ transcribe สำเร็จจริงรอบล่าสุด (primary "gemini-3.6-flash" หรือ
+        # fallback "gemini-3.5-flash") — None ถ้ายังไม่เคยประมวลผลสำเร็จ ดู models.py's
+        # transcription_model_used docstring (2026-08-05, ผู้ใช้ขอให้บันทึก/แสดงทุกที่)
+        "transcription_model_used": meeting.transcription_model_used,
         "attendees": [
             {"name": a.name, "position": a.position, "email": a.email} for a in meeting.attendees
         ],
-        "agenda_items": [a.description for a in meeting.agenda_items],
+        "agenda_items": [
+            {"label": a.label, "description": a.description} for a in meeting.agenda_items
+        ],
         # Multi-template (2026-08-03) — เลือกไว้ตอนสร้างการประชุม แก้ทีหลังไม่ได้ผ่าน API นี้
         "template_name": meeting.template_name,
         "template_label": docx_generation.TEMPLATE_REGISTRY.get(
@@ -241,10 +340,7 @@ def create_meeting(
             MeetingAttendee(name=a.name, position=a.position, email=a.email)
             for a in body.attendees
         ],
-        agenda_items=[
-            MeetingAgendaItem(order=i, description=desc)
-            for i, desc in enumerate(body.agenda_items)
-        ],
+        agenda_items=_build_agenda_items(body.agenda_items),
     )
     db.add(meeting)
     db.commit()
@@ -270,10 +366,91 @@ def get_meeting(
     return _meeting_to_dict(meeting)
 
 
-def _process_meeting_audio_background(meeting_id: int, filename: str) -> None:
+class AttendeesBody(BaseModel):
+    attendees: list[AttendeeIn] = []
+
+
+class AgendaItemsBody(BaseModel):
+    agenda_items: list[AgendaItemIn] = []
+
+
+def _reject_if_approved(meeting: Meeting, what: str) -> None:
+    """เดิม `attendees`/`agenda_items` ตั้งได้แค่ตอน `POST /api/meetings` (สร้างประชุม) เท่านั้น ไม่มี
+    ทางแก้ย้อนหลังเลย (ผู้ใช้เจอจริง 2026-08-07: สร้างประชุม "test" โดยลืมกรอกทั้ง 2 อย่าง แล้ว
+    Generate Minutes reject ด้วย "ไม่มีวาระการประชุมเลย" กู้ไม่ได้ต้องสร้างใหม่ทั้งใบ) — เพิ่ม endpoint
+    แก้ไขย้อนหลัง 2 อันด้านล่าง (เขียนทับทั้ง array เสมอ ตรงกับ pattern
+    `update_transcript_segments`/`set_speaker_mapping` ทุกประการ) **กันแก้หลัง `approval_status`
+    เป็น "Approved" แล้วเท่านั้น** (สถานะสุดท้ายของ compliance flow นี้ — แก้ผู้เข้าร่วม/วาระของ
+    การประชุมที่บอร์ดอนุมัติเอกสารไปแล้วจะทำให้ข้อมูลไม่ตรงกับสิ่งที่อนุมัติจริงแบบเงียบๆ) ไม่ได้บล็อก
+    สถานะอื่นเลย (Draft/Pending_Review/Needs_Revision แก้ได้ปกติ) — ⚠️ หมายเหตุ: ถ้าแก้หลังจาก
+    Generate Minutes ไปแล้ว (แต่ยังไม่ Approve) `minutes_json` เดิมจะไม่ sync กับ agenda ใหม่โดย
+    อัตโนมัติ ต้องกด Generate Minutes ซ้ำเอง — ตรงกับปรัชญา "เขียนทับ ไม่มี versioning" ของทั้งระบบ"""
+    if meeting.approval_status == "Approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"การประชุมนี้อนุมัติเอกสารไปแล้ว (Approved) แก้ไข{what}ย้อนหลังไม่ได้อีก",
+        )
+
+
+@app.put("/api/meetings/{meeting_id}/attendees")
+def update_meeting_attendees(
+    meeting_id: int,
+    body: AttendeesBody,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_role(MEETING_MANAGE_ROLES)),
+):
+    """แก้ไขรายชื่อผู้เข้าร่วมย้อนหลังได้ (2026-08-07, ผู้ใช้ขอ) — เขียนทับทั้ง array เสมอ (ให้ caller
+    ส่ง attendee ทั้งหมดที่ต้องการมาทุกครั้ง ตรงกับ pattern `set_speaker_mapping` ด้านล่าง) ใช้
+    `AttendeeIn` schema เดียวกับตอนสร้างประชุม (`MeetingCreateBody.attendees`) — cascade
+    `delete-orphan` ใน models.py จัดการลบแถวเก่า/เพิ่มแถวใหม่ให้เองตอน reassign `meeting.attendees`"""
+    meeting = db.get(Meeting, meeting_id)
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="ไม่พบการประชุมนี้")
+    _reject_if_approved(meeting, "รายชื่อผู้เข้าร่วม")
+
+    meeting.attendees = [
+        MeetingAttendee(name=a.name, position=a.position, email=a.email) for a in body.attendees
+    ]
+    db.commit()
+    return _meeting_to_dict(meeting)
+
+
+@app.put("/api/meetings/{meeting_id}/agenda_items")
+def update_meeting_agenda_items(
+    meeting_id: int,
+    body: AgendaItemsBody,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_role(MEETING_MANAGE_ROLES)),
+):
+    """แก้ไขวาระการประชุมย้อนหลังได้ (2026-08-07, ผู้ใช้ขอ) — เขียนทับทั้ง array เสมอเหมือน
+    `update_meeting_attendees` ด้านบน `order` คำนวณจากลำดับ index ใน list ที่ส่งมาเสมอ (ตรงกับตอน
+    สร้างประชุมใน `create_meeting`) ไม่รับ `order` จาก client ตรงๆ กันส่งลำดับไม่ต่อเนื่อง/ซ้ำมาเอง —
+    `label` รับตรงจาก client ได้ (ตรงกับ `AgendaItemIn`, ดู `_build_agenda_items()`) เพราะเป็น free
+    text ที่ผู้ใช้ตั้งใจกำหนดเอง (เช่น "วาระที่ 3.1") ไม่ใช่ค่าที่ derive จากลำดับเหมือน `order`"""
+    meeting = db.get(Meeting, meeting_id)
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="ไม่พบการประชุมนี้")
+    _reject_if_approved(meeting, "วาระการประชุม")
+
+    meeting.agenda_items = _build_agenda_items(body.agenda_items)
+    db.commit()
+    return _meeting_to_dict(meeting)
+
+
+def _process_meeting_audio_background(
+    meeting_id: int, filename: str, model_override: str | None = None,
+) -> None:
     """รันใน FastAPI BackgroundTask — เปิด DB session ใหม่ของตัวเอง (session ของ request เดิม
-    ปิดไปแล้วตอน response ส่งกลับ ใช้ต่อไม่ได้) เรียก audio_worker (โปรเซสแยก) แบบ synchronous
-    (บล็อกอยู่ใน background task เท่านั้น ไม่บล็อก HTTP response ที่ตอบ client ไปแล้ว)"""
+    ปิดไปแล้วตอน response ส่งกลับ ใช้ต่อไม่ได้) เรียก Gemini native audio ตรงจากโปรเซสนี้เอง (ไม่ใช่
+    audio_worker โปรเซสแยกอีกต่อไป — ดู audio_native.py's docstring) แบบ synchronous (บล็อกอยู่ใน
+    background task เท่านั้น ไม่บล็อก HTTP response ที่ตอบ client ไปแล้ว) — ไม่มี concept "worker
+    กำลังยุ่ง" อีกแล้ว (Gemini เป็น cloud call รองรับ concurrent request ได้ ไม่ผูกกับทรัพยากร GPU
+    เครื่องเดียวเหมือน audio_worker เดิม) เหลือ except เดียว (AudioNativeError) แทน 2 เดิม
+
+    model_override (2026-08-05): ส่งต่อจาก `upload_meeting_audio()`'s form field `model` (ผู้ใช้
+    เลือกเองผ่าน dropdown บน frontend) ตรงไปยัง `transcribe_meeting_audio()` เฉยๆ — validate ค่านี้
+    ไปแล้วตั้งแต่ endpoint ก่อนหน้า (เทียบกับ `config.GEMINI_TRANSCRIPTION_MODEL_CHOICES`) ที่นี่แค่
+    ส่งผ่าน"""
     from db import SessionLocal
 
     db = SessionLocal()
@@ -285,16 +462,19 @@ def _process_meeting_audio_background(meeting_id: int, filename: str) -> None:
         meeting.status = "processing"
         db.commit()
 
+        audio_path = os.path.join(UPLOAD_DIR, filename)
         try:
-            result = audio_pipeline.process(str(meeting_id), filename)
-        except AudioWorkerBusyError as e:
-            # ⚠️ ยังไม่มีระบบ retry/คิวจริง (ดู task.md Module 2 "ออกแบบ UX คิว" ที่ยังไม่ได้ทำ) —
-            # ตอนนี้แค่บันทึกว่าล้มเหลวเพราะ worker ยุ่ง ผู้ใช้ต้องอัปโหลดซ้ำเอง
-            meeting.status = "failed"
-            meeting.processing_error = f"worker กำลังยุ่งอยู่ ลองอัปโหลดใหม่อีกครั้ง: {e}"
-            db.commit()
-            return
-        except AudioWorkerError as e:
+            # checkpoint_key=str(meeting_id) (2026-08-05, session 3.32) — ให้ retry/re-upload ไฟล์
+            # เดิมไปยัง meeting เดิมข้าม chunk ที่ transcribe สำเร็จไปแล้วได้ ไม่ต้องเรียก Gemini ซ้ำ
+            # ทั้งไฟล์ถ้า chunk กลางไฟล์ fail (เจอจริง: 503 ชนพอดีกับ backend restart กลาง 11-chunk job
+            # — ดู handoff.md session 3.31/3.32) ปลอดภัยเพราะ audio_chunking.load_checkpoint() เช็ค
+            # plan (offset/duration ต่อ chunk) ตรงกับไฟล์เสียงปัจจุบันก่อนใช้เสมอ — ไฟล์เสียงคนละไฟล์
+            # ทับของเดิม (re-upload ไฟล์ใหม่) จะไม่ตรง plan เดิม ถูกทิ้งอัตโนมัติ ไม่เสี่ยง merge ผิดชุด
+            result = transcribe_meeting_audio(
+                audio_path, log=log.info, model_override=model_override,
+                checkpoint_key=str(meeting_id),
+            )
+        except AudioNativeError as e:
             meeting.status = "failed"
             meeting.processing_error = str(e)
             db.commit()
@@ -302,9 +482,36 @@ def _process_meeting_audio_background(meeting_id: int, filename: str) -> None:
 
         meeting.status = "transcribed"
         meeting.transcript_segments_json = json.dumps(result.get("transcript_segments"))
+        # บันทึกไว้ทุกที่ (ผู้ใช้ขอ 2026-08-05 — เดิมรู้ได้แค่จาก backend terminal log ของ
+        # run_with_fallback เท่านั้น ไม่มีที่เก็บถาวรต่อ meeting เลย) ดู models.py's
+        # transcription_model_used docstring — log บรรทัดสรุปชัดเจนแยกจาก log ระดับ upload/poll ของ
+        # audio_native.py เอง (หาง่ายกว่าด้วย grep "[TRANSCRIBE-DONE]")
+        model_used = result.get("model_used")
+        meeting.transcription_model_used = model_used
         db.commit()
+        log.info(
+            f"[TRANSCRIBE-DONE] meeting {meeting_id} transcribed ด้วยโมเดล={model_used} "
+            f"ใน {result.get('elapsed_seconds'):.1f}s ({len(result.get('transcript_segments') or [])} "
+            f"segments)"
+        )
     finally:
         db.close()
+
+
+@app.get("/api/transcription_models")
+def list_transcription_models(user: dict = Depends(verify_azure_ad_token)):
+    """เลือกโมเดล Gemini เองตอน upload/re-upload (2026-08-05, ผู้ใช้ขอ — ดู config.py's
+    `GEMINI_TRANSCRIPTION_MODEL_CHOICES` สำหรับที่มา) คืนรายการให้ frontend populate dropdown —
+    mirror pattern เดียวกับ `GET /api/templates`/`docx_generation.list_templates()` ทุกประการ
+    (metadata ล้วนๆ ไม่มีข้อมูลลับ อนุญาตทุก authenticated user เรียกได้) `default` คือโมเดล primary
+    ปัจจุบันจาก `config.GEMINI_MODEL_TRANSCRIPTION` — frontend ใช้ pre-select ตัวนี้เป็นค่าเริ่มต้น"""
+    return {
+        "models": [
+            {"value": value, "label": label}
+            for value, label in config.GEMINI_TRANSCRIPTION_MODEL_CHOICES
+        ],
+        "default": config.GEMINI_MODEL_TRANSCRIPTION,
+    }
 
 
 @app.post("/api/meetings/{meeting_id}/upload")
@@ -312,12 +519,23 @@ def upload_meeting_audio(
     meeting_id: int,
     background_tasks: BackgroundTasks,
     file: UploadFile,
+    model: str | None = Form(None),
     db: Session = Depends(get_db),
     user: dict = Depends(require_role(MEETING_MANAGE_ROLES)),
 ):
     meeting = db.get(Meeting, meeting_id)
     if meeting is None:
         raise HTTPException(status_code=404, detail="ไม่พบการประชุมนี้")
+
+    # เลือกโมเดลเอง (2026-08-05, ผู้ใช้ขอ — ดู list_transcription_models() ด้านบน) — validate ค่า
+    # ที่ frontend ส่งมาเทียบกับ whitelist จริงเสมอ (ไม่เชื่อ dropdown ฝั่ง client เฉยๆ กัน request
+    # ปลอมส่งชื่อโมเดล/ค่าอื่นที่ไม่ใช่ตัวเลือกจริงเข้ามาตรงๆ) ค่าว่าง/ไม่ส่งมา = ใช้ fallback chain
+    # ปกติจาก config.py เหมือนเดิมทุกประการ (ไม่ระบุ = ไม่เปลี่ยนพฤติกรรมเดิม)
+    model_override = model or None
+    if model_override is not None:
+        valid_models = {value for value, _label in config.GEMINI_TRANSCRIPTION_MODEL_CHOICES}
+        if model_override not in valid_models:
+            raise HTTPException(status_code=400, detail=f"โมเดล '{model_override}' ไม่อยู่ในรายการที่เลือกได้")
 
     # ตั้งชื่อไฟล์เองจาก meeting_id + นามสกุลต้นฉบับเท่านั้น (ไม่ใช้ชื่อไฟล์ที่ผู้ใช้ส่งมาตรงๆ —
     # กัน path traversal ที่ต้นทาง แทนที่จะพึ่ง _reject_path_traversal ฝั่ง audio_worker เพียงอย่าง
@@ -340,7 +558,9 @@ def upload_meeting_audio(
     meeting.speaker_mapping_json = None
     db.commit()
 
-    background_tasks.add_task(_process_meeting_audio_background, meeting_id, safe_filename)
+    background_tasks.add_task(
+        _process_meeting_audio_background, meeting_id, safe_filename, model_override,
+    )
 
     return {"message": "อัปโหลดสำเร็จ กำลังประมวลผลเบื้องหลัง", **_meeting_to_dict(meeting)}
 
@@ -394,8 +614,10 @@ def get_meeting_audio(
 
 
 class TranscriptSegmentIn(BaseModel):
-    # โครงเดียวกับที่ audio_worker คืนมา ({start, end, speaker, text}) — ดู
-    # audio_worker/asr.py::transcribe_segments — ฟอร์มแก้ไข transcript (ไม่บังคับ, ตามแผน Module 2)
+    # โครงเดียวกับที่ audio_native._adapt_segments() คืนมา ({start, end, speaker, text}) — เดิมมาจาก
+    # audio_worker/asr.py::transcribe_segments ก่อนเปลี่ยนมาเรียก Gemini native audio (2026-08-05,
+    # ดู audio_native.py) — schema key เดิมไม่เปลี่ยนเลยตามการตัดสินใจ /grill-me ข้อ 3 — ฟอร์มแก้ไข
+    # transcript (ไม่บังคับ, ตามแผน Module 2)
     # ส่ง start/end/speaker เดิมกลับมาด้วยเสมอ (ไม่ให้ผู้ใช้แก้ผ่าน UI นี้ แก้ได้แค่ text) แต่ backend
     # รับ start/end/speaker เป็น field ที่แก้ไขได้ในตัว schema ไว้ก่อน เผื่ออนาคตต้องการ reassign
     # speaker ต่อ segment (ยังไม่ทำ UI ส่วนนั้นตอนนี้)
@@ -505,7 +727,14 @@ def generate_meeting_minutes(
             detail="ต้องจับคู่ผู้พูด (Speaker Mapping) ให้ครบทุกคนก่อนสรุปเป็น Minutes ได้",
         )
 
-    agenda_descriptions = [a.description for a in meeting.agenda_items]
+    # ส่ง label ไปด้วย (2026-08-07 — ดู models.py's MeetingAgendaItem.label) ให้ merge กลับเข้า
+    # minutes_json ได้ตรงๆ ไม่ต้อง query DB ซ้ำตอน render docx ทีหลัง — label ไม่ส่งเข้า Gemini prompt
+    # เลย (ดู minutes_generation.py's build_minutes_user_prompt: ใช้แค่ description) เพราะเป็นเรื่อง
+    # การแสดงผลล้วนๆ ไม่เกี่ยวกับเนื้อหาที่ต้องสรุป
+    agenda_items_in = [
+        {"label": a.label or f"วาระที่ {i + 1}", "description": a.description}
+        for i, a in enumerate(meeting.agenda_items)
+    ]
 
     try:
         minutes = generate_minutes(
@@ -513,7 +742,7 @@ def generate_meeting_minutes(
             meeting_number=meeting.meeting_number,
             meeting_date_iso=meeting.meeting_date.isoformat(),
             attendees=[{"name": a.name, "position": a.position} for a in meeting.attendees],
-            agenda_descriptions=agenda_descriptions,
+            agenda_items=agenda_items_in,
             transcript_segments=transcript_segments,
             speaker_mapping=speaker_mapping,
         )
@@ -521,7 +750,7 @@ def generate_meeting_minutes(
         # ปฏิเสธด้วย 400 ถ้าไม่มีวาระ (ผู้ใช้แก้ได้เอง — เพิ่มวาระ) ที่เหลือ (Gemini ล้มเหลว/schema
         # ไม่ตรง/API key ไม่มี) เป็น 503 (ปัญหาระบบ ไม่ใช่ input ผิดของผู้ใช้) — ดู
         # backend/rag.py's RAGWorkerError สำหรับ pattern การแยก error code เดียวกัน
-        status_code = 400 if not agenda_descriptions else 503
+        status_code = 400 if not agenda_items_in else 503
         raise HTTPException(status_code=status_code, detail=str(e))
 
     meeting.minutes_json = json.dumps(minutes)
@@ -716,6 +945,40 @@ def _archive_and_notify_background(meeting_id: int) -> None:
             recordings_paths.append(os.path.join(UPLOAD_DIR, meeting.audio_filename))
         archive.archive_documents(meeting_id, [final_docx_full, protected_pdf])
         archive.archive_recordings(meeting_id, recordings_paths)
+
+        # ── ต่อสาย Approve → Confidential RAG index (2026-08-07) ────────────────────────
+        # ตัดสินใจจากผู้ใช้ผ่าน AskUserQuestion: "Auto: index อัตโนมัติทันทีที่ Approve" — copy
+        # final_docx_full เข้า confidential_corpus/ แล้วสั่ง worker rebuild ดัชนีทั้งก้อนทันที (ไม่
+        # incremental — ผู้ใช้ยอมรับ tradeoff นี้แล้วเพราะ corpus เล็ก/ไม่บ่อย) แยก try/except ของ
+        # ตัวเอง เหมือนขั้นตอนอื่นทั้งหมดในฟังก์ชันนี้ — index ไม่สำเร็จต้องไม่ทำให้ approve
+        # (ที่สมบูรณ์ไปแล้ว: PDF+email+archive) ถูกมองว่าล้มเหลว แค่ log ไว้ใน audit trail
+        try:
+            os.makedirs(config.RAG_WORKER_CONFIDENTIAL_CORPUS_DIR, exist_ok=True)
+            corpus_dest = os.path.join(
+                config.RAG_WORKER_CONFIDENTIAL_CORPUS_DIR, f"meeting_{meeting_id}_final.docx"
+            )
+            shutil.copy2(final_docx_full, corpus_dest)
+            rebuild_result = trigger_confidential_index_rebuild()
+            if rebuild_result.get("success"):
+                log.info(f"[meeting {meeting_id}] {rebuild_result.get('message')}")
+            else:
+                log.warning(
+                    f"[meeting {meeting_id}] rebuild confidential RAG index ไม่สำเร็จ: "
+                    f"{rebuild_result.get('message')}"
+                )
+                db.add(MeetingApprovalLog(
+                    meeting_id=meeting_id, action="rag_index_failed", from_status="Approved",
+                    to_status="Approved", comment=str(rebuild_result.get("message", ""))[:500],
+                    user_id="system",
+                ))
+                db.commit()
+        except OSError as e:
+            log.warning(f"[meeting {meeting_id}] copy เอกสารเข้า confidential_corpus ไม่สำเร็จ: {e}")
+            db.add(MeetingApprovalLog(
+                meeting_id=meeting_id, action="rag_index_failed", from_status="Approved",
+                to_status="Approved", comment=str(e)[:500], user_id="system",
+            ))
+            db.commit()
     finally:
         db.close()
 
@@ -820,4 +1083,21 @@ def open_magic_link(token: str, db: Session = Depends(get_db)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    # reload=False (2026-08-05, session 3.32 — เปลี่ยนจาก True ถาวรตามที่ผู้ใช้ยืนยัน) เดิมเป็น
+    # CRITICAL ที่พบตั้งแต่ session 3.20 (auto-reload ฆ่า background task กลางคันถ้ามีไฟล์ .py ใน
+    # backend/ ถูกแก้ระหว่าง transcription กำลังรันอยู่) ตอนนั้นผู้ใช้เลือกยอมรับความเสี่ยงไว้ก่อนเพื่อ
+    # ความสะดวกตอน dev — จนมาเจอจริงใน session 3.31/3.32: 11-chunk transcription job ตายกลางทางที่
+    # chunk 7 (503 ชนพอดีกับ process restart) เสียเควตา chunk 1-6 ไปฟรี (ตอนนั้นยังไม่มี
+    # checkpoint/resume) ยืนยันว่าความเสี่ยงนี้ไม่ใช่แค่ทฤษฎี ตอนนี้ต้อง restart backend เอง
+    # (Ctrl+C แล้วรันคำสั่งนี้ใหม่) ทุกครั้งที่แก้โค้ด .py — แลกความสะดวกตอน dev กับความน่าเชื่อถือของ
+    # job ที่กินเวลานาน (transcription ไฟล์ยาวใช้เวลาหลายนาทีถึงหลักชั่วโมง)
+    #
+    # host="0.0.0.0" (2026-08-07, ผู้ใช้ขอ — ComSec ตัวจริงเข้า http://192.168.214.98:8000/dashboard/
+    # จากเครื่องอื่นในวง LAN ไม่ได้เลยตอน bind "127.0.0.1" เพราะ loopback ไม่ฟัง LAN NIC เลยไม่ว่า IP
+    # จะถูกแค่ไหน) ⚠️ เพิ่ม attack surface จริง: (1) /dashboard เป็น StaticFiles mount ไม่มี auth คุม
+    # เลย (auth เช็คแค่ตอนเรียก /api/* ผ่าน Depends(...)) ใครก็ตามในวง LAN/WiFi เดียวกันเปิดหน้าเว็บได้
+    # แม้ยังต้อง login ผ่าน Azure AD ถึงจะดึงข้อมูลจริงได้ (2) ยังเป็น HTTP เปล่า ไม่มี TLS — token/
+    # credential วิ่ง plaintext ในเครือข่ายนั้น ผู้ใช้ยืนยันรับความเสี่ยงนี้แล้ว (2026-08-07, ผ่าน
+    # AskUserQuestion) เพื่อให้ ComSec ตัวจริงช่วยตรวจสอบได้ — ควรใช้แค่บนเครือข่ายบริษัทที่เชื่อถือได้
+    # เท่านั้น ไม่ใช่ WiFi สาธารณะ ถ้าจะใช้ต่อเนื่องระยะยาวควรพิจารณา TLS/VPN แทนการเปิด 0.0.0.0 ตรงๆ
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)

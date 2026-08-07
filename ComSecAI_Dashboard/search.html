@@ -181,6 +181,14 @@
                     </button>
 </div>
 </div>
+<!-- Meeting Filter (เฉพาะ scope "เอกสารบอร์ด (ลับ)" — session 3.37: จำกัดผลค้นหาให้อยู่แค่การประชุม
+     ที่เลือกได้ กันคำตอบปนกันข้ามการประชุม ซ่อนไว้ก่อนตอน scope="general" ดู app.js's
+     updateMeetingFilterVisibility() -->
+<div class="flex justify-center mb-6" id="search-meeting-filter-wrap" style="display:none;">
+<select class="role-select" id="search-meeting-select" style="min-width: 280px;">
+<option value="">ทุกการประชุม (ค้นหาทุกเอกสารลับ)</option>
+</select>
+</div>
 <!-- Conversation Scroll Area -->
 <div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-8 pb-32 px-2 md:px-6" id="search-conversation">
 <!-- Empty State (ค่าเริ่มต้น, ซ่อนอัตโนมัติเมื่อมีคำถามแรกเข้ามา ดู app.js's appendSearchUserBubble) -->

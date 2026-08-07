@@ -37,7 +37,7 @@ def generate_minutes(
     meeting_number: str,
     meeting_date_iso: str,
     attendees: list[dict],
-    agenda_descriptions: list[str],
+    agenda_items: list[dict],
     transcript_segments: list[dict],
     speaker_mapping: dict[str, str],
 ) -> dict:
@@ -46,15 +46,22 @@ def generate_minutes(
     ด้วยกัน คืน dict พร้อมเก็บลง `Meeting.minutes_json` ตรงๆ (โครงสร้างตรงกับ
     `minutes_schema.py::MinutesOfMeeting`) — raise MinutesGenerationError ถ้า Gemini ล้มเหลวทุก
     โมเดล, ตอบกลับไม่ตรง schema, หรือจำนวน/ลำดับ agenda_items ไม่ตรงกับที่ส่งไป (ป้องกันข้อมูลไม่
-    ครบ/ผิดวาระหลุดเข้า DB แบบเงียบๆ)"""
+    ครบ/ผิดวาระหลุดเข้า DB แบบเงียบๆ)
+
+    agenda_items (2026-08-07, เปลี่ยนจาก `agenda_descriptions: list[str]` เดิม — ดู models.py's
+    MeetingAgendaItem.label docstring): list ของ `{label, description}` — **`label` ใช้แค่ตอน merge
+    ผลลัพธ์กลับเข้า `minutes_json` เท่านั้น ไม่ส่งเข้า Gemini prompt เลย** (ดู
+    `build_minutes_user_prompt` ด้านล่าง: รับแค่ description ล้วน) เพราะเป็นเรื่องการแสดงผล/เลขวาระ
+    ที่มนุษย์กำหนดเอง ไม่ใช่เนื้อหาที่ต้องให้ Gemini อ่าน/สรุป"""
     if not config.GOOGLE_API_KEY:
         raise MinutesGenerationError(
             "ไม่พบ GOOGLE_API_KEY ใน backend/.env — ต้องตั้งค่า API key (paid tier ตามที่ตัดสินใจไว้ "
             "เพราะเนื้อหาบอร์ดเป็นความลับสูง ดู .env.example) ก่อนใช้ฟีเจอร์นี้"
         )
-    if not agenda_descriptions:
+    if not agenda_items:
         raise MinutesGenerationError("การประชุมนี้ไม่มีวาระการประชุมเลย ไม่สามารถสรุป Minutes ได้")
 
+    agenda_descriptions = [item["description"] for item in agenda_items]
     system_prompt = build_minutes_system_prompt(company_name)
     user_prompt = build_minutes_user_prompt(agenda_descriptions, transcript_segments, speaker_mapping)
 
@@ -93,25 +100,28 @@ def generate_minutes(
     if result is None:
         raise MinutesGenerationError(f"สร้าง Minutes ไม่สำเร็จ (ลองครบทุกโมเดลแล้ว): {error}")
 
-    if len(result.agenda_items) != len(agenda_descriptions):
+    if len(result.agenda_items) != len(agenda_items):
         raise MinutesGenerationError(
-            f"Gemini ตอบจำนวนวาระไม่ตรงกับที่ส่งไป (ส่งไป {len(agenda_descriptions)} วาระ "
+            f"Gemini ตอบจำนวนวาระไม่ตรงกับที่ส่งไป (ส่งไป {len(agenda_items)} วาระ "
             f"ได้ผลกลับมา {len(result.agenda_items)} วาระ) — ปฏิเสธผลลัพธ์นี้กันข้อมูลไม่ครบ/ผิดวาระ"
         )
 
-    # merge ผลจาก Gemini (สรุป+มติต่อวาระ) เข้ากับ description ต้นฉบับจาก DB (ground truth) — ใช้
-    # ข้อความวาระของจริงจาก DB เสมอ ไม่ใช้ข้อความที่ Gemini อาจ paraphrase มาแทน
+    # merge ผลจาก Gemini (สรุป+มติต่อวาระ) เข้ากับ description/label ต้นฉบับจาก DB (ground truth) —
+    # ใช้ข้อความวาระของจริงจาก DB เสมอ ไม่ใช้ข้อความที่ Gemini อาจ paraphrase มาแทน (label ไม่เคยส่งเข้า
+    # Gemini เลยด้วยซ้ำ — ผ่านมาจาก DB ตรงๆ 100%)
     agenda_by_order = {item.agenda_order: item for item in result.agenda_items}
     merged_agenda_items = []
-    for order, description in enumerate(agenda_descriptions):
+    for order, agenda_item_in in enumerate(agenda_items):
         item = agenda_by_order.get(order)
         if item is None:
             raise MinutesGenerationError(
-                f"Gemini ไม่ได้ตอบผลของวาระลำดับที่ {order} ('{description}') กลับมา"
+                f"Gemini ไม่ได้ตอบผลของวาระลำดับที่ {order} "
+                f"('{agenda_item_in['description']}') กลับมา"
             )
         merged_agenda_items.append({
             "agenda_order": order,
-            "description": description,
+            "label": agenda_item_in.get("label") or f"วาระที่ {order + 1}",
+            "description": agenda_item_in["description"],
             "discussion_summary": item.discussion_summary,
             "resolution_status": item.resolution_status,
             "resolution_text": item.resolution_text,

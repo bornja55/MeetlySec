@@ -98,7 +98,9 @@ detection ในโค้ดของ Com Sec เองเพื่อไม่�
   3. **secret หลุดผิดไฟล์**: พบ Google API key จริง + ชื่อบริษัทจริงถูกพิมพ์ลงใน `backend/.env.example` (ไฟล์ template ที่ git track) แทน `backend/.env` (ไฟล์จริงที่ gitignore) — ยืนยันด้วย `git diff` ว่ายังไม่เคย commit/push จึงไม่รั่วจริง สลับค่ากลับเรียบร้อย
 - `[x]` ⚠️→✅ **latency ผิดปกติ — ยืนยันสาเหตุแท้จริงแล้ว (แก้จาก stale entry นี้ด้วย `/debug-mantra`, 2026-08-02)**: entry นี้เขียนไว้ตอนที่ยังตั้งสมมติฐานว่าเป็น retry ภายใน `google-genai` SDK — สมมติฐานนั้นถูก**ล้มแล้ว** (falsified) ด้วยการวัดจริงแยกทีละสเตจ พบว่าตัวการจริงคือ **`sentence-transformers` CrossEncoder auto-detect ตกไปที่ CPU+fp16** (ไม่ใช่ SDK หรือ network) — รายละเอียดสาเหตุ+การแก้ครบถ้วนอยู่ที่ Module 0 ด้านบน (บรรทัด "ข้อสรุปสุดท้าย (2026-08-02, ยืนยัน root cause จริง)") ไม่ซ้ำเขียนที่นี่ — คงไว้เป็น breadcrumb ว่าทฤษฎีตั้งต้นคืออะไรและทำไมถึงตัดออก
 - `[ ]` เชื่อมต่อ Authentication (Azure AD) จริง — ปัจจุบัน `auth.py` เป็น mock token string ล้วนๆ ไม่มีการ decode JWT/เรียก Azure AD จริง (ยังไม่แตะรอบนี้ — ต้องมี Azure AD tenant ID/client ID จากผู้ใช้ก่อน)
-- `[x]` **เพิ่มระบบแยกสิทธิ์เอกสารลับแล้ว (สถาปัตยกรรม)** — ตัดสินใจ**แยกดัชนี**แทนแท็ก metadata ในดัชนีเดียวกับ Local RAG (ดู `rag_worker/confidential_rag.py` docstring สำหรับเหตุผล: Local RAG ไม่มี RBAC เลย ถ้าใส่ BOD minutes ลงดัชนีร่วมจะเสี่ยงข้อมูลลับหลุดไปโผล่ในผลค้นหาของ Local RAG) `rag_worker/main.py`'s `/query_confidential` เช็ค role เทียบ `CONFIDENTIAL_ALLOWED_ROLES` ก่อนเข้าดัชนีลับเสมอ ⚠️ **ยังไม่เคย end-to-end test เพราะยังไม่มีเอกสารลับจริงในระบบเลย** (Module 3 สร้าง minutes / Module 5 approve+archive ยังไม่ถูกสร้าง — ดัชนีลับจะว่างจนกว่าจะมีเอกสารจริงแล้วรัน `build_confidential_index.py`)
+- `[x]` **เพิ่มระบบแยกสิทธิ์เอกสารลับแล้ว (สถาปัตยกรรม)** — ตัดสินใจ**แยกดัชนี**แทนแท็ก metadata ในดัชนีเดียวกับ Local RAG (ดู `rag_worker/confidential_rag.py` docstring สำหรับเหตุผล: Local RAG ไม่มี RBAC เลย ถ้าใส่ BOD minutes ลงดัชนีร่วมจะเสี่ยงข้อมูลลับหลุดไปโผล่ในผลค้นหาของ Local RAG) `rag_worker/main.py`'s `/query_confidential` เช็ค role เทียบ `CONFIDENTIAL_ALLOWED_ROLES` ก่อนเข้าดัชนีลับเสมอ
+- `[x]` **ต่อสาย Approve → Confidential RAG index อัตโนมัติแล้ว (session 3.36, 2026-08-07)** — เดิม (entry ด้านบน) เขียนไว้ว่า "ดัชนีลับจะว่างจนกว่าจะมีเอกสารจริงแล้วรัน `build_confidential_index.py`" มือ ไล่โค้ดจริงพบว่า**ไม่มีจุดไหนในระบบเรียกสคริปต์นั้นเลยสักครั้ง** แม้ Module 5 (Approve+Archive) จะเขียนเสร็จไปแล้ว — ผู้ใช้เลือกผ่าน `AskUserQuestion`: **"Auto: index อัตโนมัติทันทีที่ Approve"** ตอนนี้ `_archive_and_notify_background()` (`backend/main.py`) copy `final_docx` เข้า `confidential_corpus/` แล้วยิง `POST /admin/rebuild_confidential_index` (endpoint ใหม่ใน `rag_worker/main.py`) ให้ worker rebuild ดัชนีทั้งก้อนทันที (full rebuild เสมอ ไม่ incremental — ยอมรับ tradeoff แล้ว) — แก้ limitation เดิมที่ต้อง restart worker ด้วย (`confidential_rag.rebuild_index_from_corpus()` reset module cache หลัง rebuild) — rebuild ล้มเหลวไม่ทำให้ approve ถูกมองว่าล้มเหลว (บันทึก `MeetingApprovalLog(action="rag_index_failed")` แทน) — verify ด้วย edge-case test (corpus ว่าง/มีแค่ README) + จำลอง full flow ด้วย fake HTTP server ผ่านหมดทุกเคส (ดู handoff.md session 3.36 รายละเอียดเต็ม)
+- `[x]` **live test แรกจริงเจอ 2 ปัญหา แก้แล้วทั้งคู่ (session 3.37, 2026-08-07)**: (1) ⚠️→✅ **บั๊ก docx อ่านเป็น garbled text** — `rag_worker/requirements.txt` เดิมตัด `docx2txt` ออกตั้งใจ (ตอนนั้น worker ไม่เคยอ่าน `.docx` ตรงๆ เลย) พอ session 3.36 เพิ่มโค้ดยื่น `.docx` เข้า `SimpleDirectoryReader` ตรงๆ เป็นครั้งแรกในโปรเจกต์ ไม่มี `docx2txt` ทำให้ llama_index อ่านไฟล์ zip เป็น UTF-8 ดิบ — ตรงกับอาการจริงที่ผู้ใช้เจอ (sources เป็นตัวอักษรมั่ว) เพิ่ม `docx2txt` กลับเข้า requirements แล้ว **ผู้ใช้ต้องรัน `pip install docx2txt` + rebuild ดัชนีลับใหม่เอง** (ดัชนีเดิม garbled ทั้งก้อน ติดตั้ง dependency อย่างเดียวไม่พอ) (2) ✅ **เพิ่ม dropdown กรองผลตามการประชุม** — ผู้ใช้ขอเพิ่ม (เช็คแล้วไม่มีสเปกนี้ใน `stitch_brief_rag_search.md` เดิม เป็นฟีเจอร์ใหม่) แนะนำ+เลือกแนวทาง filter ก่อนถาม (ไม่ใช่แยกห้องแชท เพราะ session model ผูก `user_id` เดียว ไม่ใช่ per-document — แยกห้องแชทจริงต้องรื้อ architecture ทั้งชุด) — tag `meeting_id` metadata ต่อ chunk ตอน index (แกะจากชื่อไฟล์ `meeting_{id}_final.docx`), filter เองใน Python หลัง retrieve (ไม่ใช้ llama_index's `MetadataFilters` เพราะ **`FaissVectorStore` ไม่รองรับ metadata filter แบบ native**), dropdown ใหม่ในหน้า Policy Search (`search.html`/`app.js`) ดึงรายชื่อจาก `GET /api/meetings` กรอง `Approved` ฝั่ง client — verify ด้วย mock `_index`/`_reranker`/`llm_fallback` (ไม่ต้องพึ่ง torch/faiss) 4 เคส + TestClient เช็ค `meeting_id` ไหลผ่านทั้งสาย backend→worker ผ่านหมด (ดู handoff.md session 3.37 รายละเอียดเต็ม) ⚠️ **ยังไม่ live test บนเครื่องจริง** (ต้อง pip install docx2txt + rebuild index + restart ทั้ง `rag_worker`/`backend` ก่อน แล้วเช็คว่า dropdown โผล่+sources อ่านออกจริง)
 - `[x]` **`/api/rag/query` (ทั่วไป) และ `/api/rag/query_confidential` (จำกัดเฉพาะ Com_Sec_Maker/Checker/Board_Member/Global_Admin) ต่อกับ role จริงแล้ว** — `backend/main.py` ส่ง `user["role"]`/`user["user_id"]` จาก `require_role()`/`verify_azure_ad_token()` ต่อไปให้ worker ⚠️ role/user ที่ใช้ตอนนี้ยังมาจาก **mock auth** (ดูรายการด้านบน — Azure AD จริงยังไม่เชื่อม)
 - `[x]` ~~โคลนและประยุกต์ใช้ `book-to-skill`~~ — **ตัดออกจากแผนแล้ว และลบโฟลเดอร์ทิ้งแล้ว (`/scrutinize` cleanup 2026-08-01)** ซ้ำซ้อนกับเครื่องมือที่ Local RAG มีอยู่แล้ว (`extract_forms.py`/`convert_forms_to_txt.py`/`dump_raw_forms.py` + Gemini แกะทุกตัวอักษร) ซึ่งรักษาความสมบูรณ์ของเนื้อหา 100% ส่วน `book-to-skill` เป็นเครื่องมือ**กลั่น/สรุป**เนื้อหา (ลด token 24-51 เท่า) ไม่เหมาะกับเอกสารนโยบาย/กฎหมายที่ต้องอ้างอิงคำต่อคำ
 
@@ -107,6 +109,41 @@ detection ในโค้ดของ Com Sec เองเพื่อไม่�
 - `[x]` ✅ **รองรับไฟล์เสียง/วิดีโอต้นทาง 3 แหล่ง แบบ manual upload เหมือนกันหมด (ตัดสินใจจาก `/grill-me` รอบ 3)**: Google Meet, MS Teams, เครื่องบันทึกเสียง/มือถือ (ออฟไลน์) — ไม่ทำ auto-fetch ผ่าน Google Drive/Graph API ใน MVP, ใช้ `ffmpeg` รองรับทุกฟอร์แมตที่รู้จัก (mp4/wav/mp3/m4a/mov ฯลฯ) ไม่จำกัดชนิดไฟล์ล่วงหน้า — ชั้น extraction เขียนแล้ว (`audio_worker/ffmpeg_utils.py::extract_mono_16k_wav`, ไม่เช็คนามสกุลไฟล์ ปล่อยให้ ffmpeg ตัดสินเอง) **ต่อกับ upload endpoint จริงแล้ว** (`audio_worker/pipeline.py` บรรทัด 130 เรียก `ffmpeg_utils.extract_mono_16k_wav` เป็นสเตจแรกของ `process_audio_file`, ยืนยันรันจริงผ่าน end-to-end test ของ Meeting entity ด้านล่างซ้ำหลายรอบแล้ว — ไม่มีงานค้าง)
 - `[x]` **สถาปัตยกรรมเปลี่ยนจากแผนเดิม (2026-08-02, ต่อจาก `/debug-mantra` ที่วัด VRAM จริง)**: เดิมรายการถัดไป (สร้างฟังก์ชันอัปโหลด) ระบุว่ารันผ่าน "FastAPI Async Background Task" ในโปรเซสเดียวกับ backend หลัก — **แก้เป็นแยกเป็นโปรเซสต่างหาก (`D:\Com Sec\audio_worker\`) เหมือน `rag_worker/` แล้ว** เพราะ Diarization+ASR ใช้ torch หนักไม่ต่างจาก RAG worker เลย เสี่ยง Windows WINHTTP.dll crash บั๊กสายพันธุ์เดียวกันถ้ารวมโปรเซส (ผู้ใช้ยืนยันการตัดสินใจนี้ผ่าน AskUserQuestion) — เขียนโครงเสร็จแล้ว: `audio_worker/main.py` (FastAPI, พอร์ต 8767, endpoint `/health` + `/process`), `audio_worker/pipeline.py` (orchestration), `backend/audio.py` (HTTP client เหมือน `backend/rag.py`) ✅ **ยืนยันรันจริงสำเร็จบนเครื่อง Windows แล้ว (2026-08-02)** — `python -m uvicorn main:app --host 127.0.0.1 --port 8767` ขึ้นไม่มี error, `/health` ตอบ `{"status":"ready","state":"idle"}`, ยิง `/process` ด้วยไฟล์ทดสอบ (`typhoon-asr/examples/cv_test.wav`) ผ่าน pipeline เต็มสาย (ffmpeg→diarization→ASR) สำเร็จใน 8.4s ได้ `diarization_segments`+`asr_chunks` กลับมาจริง (ข้อความ ASR ผิดเพี้ยนเพราะไฟล์ทดสอบเป็นภาษาอังกฤษ ไม่ตรงโดเมนโมเดลไทย — ไม่ใช่บั๊ก ยังไม่เคยทดสอบกับเสียงประชุมภาษาไทยจริง)
 - `[x]` **สร้าง "การประชุม" (Meeting) เป็น entity แยกต่างหาก ก่อนอัปโหลดไฟล์เสียง (ตัดสินใจจาก `/grill-me` รอบ 3)** — ฟอร์มกรอกล่วงหน้า: วันที่ประชุม, เลขที่การประชุม, รายชื่อผู้เข้าร่วม+ตำแหน่ง, วาระการประชุม — อัปโหลดไฟล์เสียงทีหลังโดยผูกเข้ากับ meeting ที่สร้างไว้แล้ว ✅ **เขียนเสร็จแล้ว (2026-08-02)**: ตัดสินใจ persistence layer ร่วมกับผู้ใช้ = **SQLite + SQLAlchemy ORM** (เทียบ sqlite3 ดิบ/JSON file แล้ว — เลือกเพราะต้องมี FK จริงข้าม Meeting/attendees/agenda และจะขยายอีกใน Module 3-5) — ไฟล์ใหม่: `backend/db.py` (engine/session, `init_db()` เรียกตอน import โมดูล, DB path `backend/com_sec.db`), `backend/models.py` (`Meeting`/`MeetingAttendee`/`MeetingAgendaItem`) — endpoint ใหม่ใน `backend/main.py`: `POST /api/meetings` (สร้าง, role `Com_Sec_Maker`/`Checker`/`Global_Admin`), `POST /api/meetings/{id}/upload` (multipart, sanitize ชื่อไฟล์เป็น `meeting_{id}{ext}` เอง ไม่ใช้ชื่อที่ client ส่งมาตรงๆ กัน path traversal ที่ต้นทาง, เรียก `_process_meeting_audio_background` ผ่าน `BackgroundTasks` ไม่บล็อก HTTP response), `GET /api/meetings`/`GET /api/meetings/{id}` (poll สถานะ) — ✅ **ยืนยันรันจริงสำเร็จบนเครื่อง Windows ครบสาย end-to-end แล้ว (2026-08-02)**: สร้างการประชุม (`POST /api/meetings`) → อัปโหลดไฟล์ทดสอบ (`POST /api/meetings/2/upload`) → background task เรียก audio_worker สำเร็จ → poll `GET /api/meetings/2` เห็น `status="transcribed"` พร้อม `diarization_segments`/`asr_chunks` กลับมาจริงครบ (ทดสอบ error path ด้วยเช่นกัน: ครั้งแรกที่ audio_worker ยังไม่รัน ได้ `status="failed"` + `processing_error` ที่มีความหมายชัดเจนตามที่ออกแบบไว้ ไม่ crash) ⚠️ **ยังไม่ได้ทำ**: RBAC ของ `GET /api/meetings` (ตอนนี้ authenticated user ใดก็เห็นได้หมด), ระบบ retry/คิวจริงถ้า audio_worker ยุ่ง (แค่บันทึก `status="failed"` ให้ผู้ใช้อัปโหลดซ้ำเอง), Alembic migration (ใช้ `create_all()` ตรงๆ พอสำหรับ MVP)
+  ✅ **เพิ่มแก้ไข attendees/agenda ย้อนหลังได้แล้ว (2026-08-07, ผู้ใช้ขอ)** — เดิมตั้งได้แค่ตอนสร้าง
+  meeting เท่านั้น (ฟอร์มไม่บังคับกรอกด้วย) พบจริง: meeting "test" ถูกสร้างแบบไม่มี agenda เลย ทำให้
+  Generate Minutes reject ด้วย "ไม่มีวาระการประชุมเลย" กู้ไม่ได้ ต้องสร้างใหม่ทั้งใบ — เพิ่ม
+  `PUT /api/meetings/{id}/attendees`/`PUT /api/meetings/{id}/agenda_items` (`main.py`, เขียนทับทั้ง
+  array เสมอ ตรงกับ pattern `update_transcript_segments`/`set_speaker_mapping`) บล็อกด้วย 400 ถ้า
+  `approval_status="Approved"` แล้ว (กันแก้ข้อมูลที่บอร์ดอนุมัติเอกสารไปแล้วแบบเงียบๆ) — Frontend:
+  ปุ่ม Edit ข้าง Participants/Agenda ใน `meeting-detail.html`, `renderParticipantsEdit()`/
+  `renderAgendaEdit()` ใน `app.js` (input rows + add/remove + Save/Cancel, pattern เดียวกับ Speaker
+  Mapping/Edit Transcript) ซ่อนปุ่มถ้า Approved แล้ว — **verify ด้วย FastAPI TestClient จริง (ไม่ mock
+  เลย เพราะ endpoint นี้ไม่พึ่ง Gemini/Word)**: สร้าง meeting ว่าง → PUT attendees/agenda → GET ซ้ำ
+  ยืนยัน persist จริงใน DB → generate_minutes ไม่ reject "ไม่มีวาระ" อีกต่อไป → overwrite ทดสอบ (list
+  สั้นกว่าเดิมต้องแทนที่ ไม่ merge) → 404 meeting ไม่มีจริง → 403 role อื่น (Board_Member) → 400 หลัง
+  Approved ทั้ง 2 endpoint — **ทุก assertion ผ่านหมด (18 เคส)** ⚠️ **ยังไม่เคยเปิดจริงในเบราว์เซอร์**
+  (เขียน UI จาก static analysis เหมือนงาน frontend อื่นๆของโปรเจกต์นี้ทุกครั้ง) — ดู handoff.md
+  session 3.34
+  ✅ **เพิ่มเลขวาระแบบกำหนดเอง (2026-08-07, session 3.35, ผู้ใช้ขอ)** — ระบบเดิมพิมพ์ "วาระที่
+  {ลำดับ}" อัตโนมัติจาก index (0,1,2,...) เท่านั้น ไม่รองรับวาระย่อยแบบ "3.1/3.2" หรือเลขข้ามที่ไม่
+  เรียงต่อเนื่องตามธรรมเนียมบอร์ดจริง — เพิ่ม `MeetingAgendaItem.label` (คอลัมน์ใหม่, free text แยก
+  จาก `order` เดิมที่ยังคุมลำดับจริง/จับคู่ผลลัพธ์ Gemini เหมือนเดิมทุกประการ ไม่กระทบ) เขียน migration
+  เบาที่สุดใน `db.py::_migrate_add_missing_columns()` (`ALTER TABLE ... ADD COLUMN` เช็ค
+  `PRAGMA table_info` ก่อนกันซ้ำ — ไม่มี Alembic ในโปรเจกต์นี้) ดีฟอลต์ `"วาระที่ {ลำดับ}"` ถ้าไม่กรอก
+  (`main.py::_build_agenda_items()`) — `build_minutes_template.py` แก้ tag จาก
+  `"วาระที่ {{ item.agenda_order }}"` (hardcode) เป็น `"{{ item.label }}"` ตรงๆ (รันสคริปต์ regenerate
+  ทั้ง 2 ไฟล์ template จริงแล้ว — `templates/minutes_template.docx`/`minutes_template_subcommittee.docx`)
+  `minutes_generation.py`/`docx_generation.py` ส่ง label ผ่านทุกชั้นจนถึง docx (label ไม่เข้า Gemini
+  prompt เลย เป็นเรื่อง DB/แสดงผลล้วนๆ) — **verify ด้วย TestClient + เรียก `render_minutes_docx()`
+  ตรงๆด้วยข้อมูลจำลอง label "5"/"5.2.1" (ไม่เรียงต่อเนื่อง+ซ้อนหลายชั้น) ยืนยันโผล่ในไฟล์ .docx จริง
+  ถูกต้อง ไม่มี "วาระที่ 0/1" แบบเดิมหลงเหลือ (12 assertion ผ่านหมด)** — ⚠️ ระวังตอนทดสอบ: สคริปต์แรก
+  เผลอเขียนไฟล์ทดสอบลง `backend/generated_docs/` จริงของโปรเจกต์ (path นี้ไม่ได้ override ผ่าน env
+  เหมือน DB) ต้องขอสิทธิ์ลบผ่าน `allow_cowork_file_delete` แล้วลบไฟล์ทดสอบทิ้ง — ยืนยันแล้วว่าไม่ได้
+  เขียนทับไฟล์จริงของ meeting ไหนเลย (เช็ค `minutes_docx_path` ใน DB จริงก่อน — เป็น `None` อยู่แล้ว)
+  แต่ครั้งหน้าถ้าต้อง verify `render_minutes_docx()` ตรงๆอีก ควร monkeypatch
+  `docx_generation.GENERATED_DOCS_DIR` ไปที่ temp dir ด้วยเหมือนที่ทำกับ `COM_SEC_DB_PATH`
+  ✅ **live test จริงในเบราว์เซอร์ผ่านแล้ว (2026-08-07, ยืนยันโดยผู้ใช้ — "เรียบร้อยใช้งานได้ครบถ้วน")**
+  — ไม่มีงานค้างอีก ดู handoff.md session 3.35
 - `[x]` สร้างฟังก์ชันประมวลผลไฟล์เสียง/วิดีโอ (**แยกโปรเซสแล้ว ไม่ใช่ Background Task ในโปรเซสเดียวกับ backend** — ดูรายการด้านบน) **ประมวลผลทีละไฟล์ queue เดียว ไม่ขนาน**: บังคับด้วย `threading.Lock` ใน `audio_worker/pipeline.py` (คืน HTTP 409 ถ้ามีงานค้างอยู่แล้ว)
 - `[x]` โคลนโปรเจกต์ `meetily`, `typhoon-asr`, `typhoon2-audio`, `Diarization_ThaiSpeech_2022` (ยืนยันแล้วว่าโคลนจริง มีไฟล์ครบ)
 - `[x]` ติดตั้งและปรับใช้ `ffmpeg` สำหรับสกัดเสียงเป็น 16kHz Mono WAV — เขียนโค้ดแล้ว (`audio_worker/ffmpeg_utils.py::extract_mono_16k_wav`) ⚠️ ยังไม่ได้ทดสอบรันจริง (ต้องมี ffmpeg ใน PATH ของเครื่อง — ยังไม่ยืนยันว่าติดตั้งแล้ว)
@@ -186,13 +223,305 @@ detection ในโค้ดของ Com Sec เองเพื่อไม่�
      เมื่อถึงเวลาตัดจริง — git history เก็บโค้ดไว้ให้กู้คืนได้ถ้าจำเป็น ไม่เก็บเป็น archive/ แยก
   7. **⚠️ ยังไม่ตัดขาดจริง — รอทดสอบเพิ่มก่อน**: ทดลองจริงมีแค่ไฟล์ประชุมเดียว (คนละรอบ/โมเดล) ยังไม่พอ
      ที่จะมั่นใจว่าคุณภาพดีสม่ำเสมอกับประชุมอื่น (คนพูดเยอะกว่า/เสียงคุณภาพแย่กว่า) — **ต้องทดสอบกับ
-     ไฟล์ประชุมอื่นอย่างน้อย 1-2 ไฟล์ก่อน** ค่อยลบ `audio_worker/` และตัด production path จริง เขียนโค้ด
-     adapter/wiring (ข้อ 2-3) เตรียมไว้ได้เลยตอนนี้ แต่การ garbage-collect `audio_worker/` ต้องรอผ่าน
-     ด่านนี้ก่อน — ดู handoff.md สำหรับ session ที่บันทึกการ grill นี้
+     ไฟล์ประชุมอื่นอย่างน้อย 1-2 ไฟล์ก่อน** ค่อยลบ `audio_worker/` และตัด production path จริง — ✅
+     **เขียนโค้ด adapter/wiring (ข้อ 2-3) เสร็จแล้ว (2026-08-05, `/debug-mantra`)**: `backend/
+     audio_native.py` (ใหม่ — `transcribe_meeting_audio()`/`transcribe_audio_native()`, logic หลัก
+     ย้ายมาจาก `audio_transcription_experiment.py`), `backend/main.py`'s
+     `_process_meeting_audio_background()` เรียกฟังก์ชันนี้แทน `audio.audio_pipeline.process()` เดิม
+     แปลง schema `start_seconds`/`end_seconds`/`speaker_label` → `start`/`end`/`speaker` ที่จุดเดียว
+     (`_adapt_segments()`) — mock unit test 5 เคสผ่านหมด (happy path, fallback ไปโมเดลสำรอง, ไม่มี
+     API key, ไม่พบไฟล์, ทุกโมเดลล้มเหลว), `py_compile`/`pyflakes` สะอาด — **ยังไม่เคยเรียก Gemini
+     จริงด้วยไฟล์เสียงจริงผ่าน endpoint `/upload` เลย** (sandbox ไม่มี API key จริง) ผู้ใช้ต้อง live
+     test บนเครื่อง Windows ก่อน — ดู handoff.md session ล่าสุดสำหรับ "How to resume" เต็ม — **ยัง
+     ไม่ลบ `audio_worker/`/`backend/audio.py`** จนกว่าจะผ่านด่านทดสอบไฟล์ประชุมอื่นตามข้อ 7 นี้
+     ⚠️ **อัปเดต (2026-08-05, live test จริงครั้งแรกผ่าน endpoint `/upload`) — พบปัญหาคุณภาพจริงที่
+     กระทบเกณฑ์ข้อ 7 โดยตรง**: ผู้ใช้รายงานว่าข้อความช่วง 13:46-16:48 (~3 นาที) ของ transcript หายไป
+     เยอะมาก — ตรวจโค้ด `audio_native.py`/`_adapt_segments()` แล้วยืนยันว่า **ไม่มี logic กรอง/ตัด
+     ข้อความใดๆเลยในฝั่งเรา** (ต่างจาก pipeline เดิมที่เคยมี `ASR_MIN_SEGMENT_SECONDS` filtering) ส่ง
+     ไฟล์เสียงทั้งไฟล์เข้า Gemini ครั้งเดียว, map ผลลัพธ์ตรงๆไม่มีจุดตัดทิ้ง — สรุปว่าเป็นข้อจำกัด/
+     omission ของตัวโมเดล Gemini เองล้วนๆ ไม่ใช่บั๊กโค้ด — **ยังไม่ตัดสินใจว่าผ่าน/ไม่ผ่านเกณฑ์ข้อ 7**
+     ผู้ใช้เลือกลองอัปโหลดไฟล์เดิมซ้ำก่อน (เช็คว่า omission นี้ deterministic/เกิดซ้ำทุกรอบ หรือ
+     random ต่อ API call) — ยังไม่มีผลกลับมา — **ช่องว่างเพิ่มเติมที่พบระหว่างวินิจฉัย**: `model_used`
+     ที่ `transcribe_meeting_audio()` คืนมา (บอกว่าสำเร็จด้วย primary `gemini-3.6-flash` หรือ fallback
+     `gemini-3.5-flash`) **ยังไม่ถูกบันทึกลง DB/โชว์ในหน้าเว็บเลย** — รู้ได้แค่จาก backend terminal log
+     (`[TRANSCRIBE] สำเร็จ...`) เท่านั้น ตอนนี้ — ✅ **แก้แล้ว (2026-08-05, ผู้ใช้ขอ "บันทึกและแสดงทุกที่
+     ทั้งใน log, db, web")**: เพิ่ม `Meeting.transcription_model_used` (String, nullable) ใน
+     `backend/models.py`, `_process_meeting_audio_background()` เก็บ `result.get("model_used")` ลง
+     คอลัมน์นี้ + log บรรทัดสรุปแยกต่างหาก (`[TRANSCRIBE-DONE] meeting {id} transcribed ด้วยโมเดล=...`
+     — หาง่ายกว่า log ระดับ upload/poll เดิมของ `audio_native.py`), `_meeting_to_dict()` คืน field
+     `transcription_model_used`, frontend (`meeting-detail.html`/`app.js`'s
+     `renderTranscriptionModelUsed()`) โชว์ใต้หัวข้อ "Meeting Transcript" panel (ซ่อนเงียบๆถ้าเป็น
+     null) — verify ด้วย integration test จริงใน sandbox (สร้าง SQLite DB แยก, ยืนยันคอลัมน์ถูกสร้าง
+     จริงจาก `init_db()`, insert meeting, `import main` เพื่อใช้ `_meeting_to_dict()` จริง, ยืนยัน
+     field ไหลจาก DB → dict ถูกต้อง) ผ่านแล้ว, `py_compile`/`pyflakes`/`node --check`/HTML parse
+     สะอาดหมด — ⚠️ **DB schema เปลี่ยนอีกรอบ (เพิ่มคอลัมน์ใหม่ใน `meetings`) ต้องลบ
+     `D:\Com Sec\backend\com_sec.db` ก่อน restart backend รอบหน้าเหมือนทุกครั้งที่ schema เปลี่ยน**
+     (ไม่มี Alembic migration — MVP/test data ล้วนๆ ลบทิ้งได้ปลอดภัย) — **ยังไม่เคย verify จริงใน
+     เบราว์เซอร์**
+     ⚠️⚠️ **อัปเดต (2026-08-05 ต่ออีกรอบ) — พบปัญหาคุณภาพร้ายแรงกว่าเดิม: timestamp drift ตามสัดส่วน
+     ตลอดทั้งไฟล์ (ไม่ใช่แค่ omission)**: ผู้ใช้รายงานว่า timestamp ใน transcript ไม่ตรงกับเสียงจริง
+     (เสียงจริงนาทีที่ 6:19 แต่ข้อความที่ตรงกันจริงถูกติด timestamp 10:14) พร้อมเดาว่าอาจเกิดจากไม่ได้
+     ลบช่วงที่ไม่ได้ถอด — **ตรวจด้วยข้อมูลจริงแล้ว (mantra 3 falsify)**: query `com_sec.db` ดึง
+     `transcript_segments_json` ของ meeting #1 จริง (263 segment) + วัดความยาวไฟล์เสียงจริงด้วย
+     `ffprobe` (`backend/uploads/meeting_1.m4a` = 55:42/3342.7s) — **สมมติฐาน "ไม่ลบช่วงที่ไม่ได้ถอด"
+     ถูก falsify แล้ว**: gap ระหว่าง segment ที่ติดกันทั้งหมด (263 คู่) ใหญ่สุดแค่ 0.7s แทบไม่มีช่วงขาด
+     หายเลย — **สาเหตุจริงคือ drift ตามสัดส่วนคงที่ตลอดไฟล์**: `end` ของ segment สุดท้ายที่ Gemini
+     รายงาน = 93:20 (5600s) ทั้งที่ไฟล์จริงยาวแค่ 55:42 (3343s) → อัตราส่วน 1.675x และที่จุดที่ผู้ใช้
+     เจอ (06:19 จริง ↔ 10:14 ที่รายงาน) อัตราส่วน 1.620x — **สองอัตราส่วนนี้ใกล้กันมากทั้งที่วัดคนละจุด
+     ของไฟล์ (นาทีที่ 6 vs นาทีที่ 55)** ยืนยันว่าเป็นการประมาณเวลาผิดแบบสม่ำเสมอ (ไม่ใช่ drift สะสม
+     จากช่วงที่หายเป็นก้อนๆ) — ตรงกับความเสี่ยงที่รู้อยู่แล้วตั้งแต่ session 3.13: Gemini Developer API
+     mode ใช้ `audio_timestamp=True` (native, แม่นระดับเฟรม) ไม่ได้ ต้องขอผ่าน prompt+schema ให้โมเดล
+     ประมาณเอาเอง (น่าจะอิงจังหวะพูด/จำนวนคำสะสมมากกว่าตำแหน่งจริงในไฟล์เสียง) — **ตรวจโค้ดฝั่งเราแล้ว
+     ไม่มีบั๊ก**: `_adapt_segments()` map `start_seconds`/`end_seconds` ตรงๆไม่มีการคำนวณ/แปลงหน่วยเลย,
+     `app.js`'s `formatSeconds()` เลขคณิต mm/ss ถูกต้อง — **สรุป: ไม่ใช่บั๊กโค้ด เป็นข้อจำกัดจริงของ
+     Gemini Developer API mode สำหรับไฟล์ยาว** ยิ่งไฟล์ยาวยิ่งคลาดสะสมมาก (ไฟล์นี้ท้ายไฟล์คลาดเกือบ 38
+     นาที) — **กระทบฟีเจอร์ click-to-seek/highlight (3.15) โดยตรง**: ใช้งานได้จริงแค่ช่วงต้นไฟล์สั้นๆ
+     เท่านั้น สำหรับไฟล์ประชุมยาวเป็นชั่วโมงจะคลาดเคลื่อนจนใช้งานจริงไม่ได้ — **ยังไม่ตัดสินใจทิศทางต่อ
+     ผู้ใช้กำลังพิจารณาอยู่** (รอผลอัปโหลดไฟล์เดิมซ้ำจากประเด็น omission ด้านบนด้วย) — ตัวเลือกที่ยังไม่
+     ได้คุยกัน: (a) ใช้ Gemini native audio ต่อสำหรับเนื้อหา/Minutes (คุณภาพดีกว่าจริง) แต่ยอมรับว่า
+     ฟีเจอร์ timestamp-dependent (click-to-seek/highlight) ใช้ไม่ได้จริงสำหรับไฟล์ยาว, (b) สำรวจว่า
+     Vertex AI Enterprise mode (รองรับ `audio_timestamp=True` จริง) เป็นไปได้ไหมสำหรับโปรเจกต์นี้,
+     (c) กลับไปใช้ audio_worker (pyannote+typhoon-asr) เฉพาะสำหรับความแม่นของเวลา แม้ diarization
+     coherence จะแย่กว่า — ดู handoff.md session ล่าสุดสำหรับบทวิเคราะห์เต็ม
+     ✅ **แก้แล้ว (2026-08-05, session 3.21) — เขียน audio chunking**: ผู้ใช้ขอให้หาว่าคนอื่นแก้ปัญหา
+     นี้ยังไง + พร้อมเปลี่ยนวิธี — ค้นแล้วพบว่าหลายทีมอิสระ (Towards Data Science's production
+     pipeline, GitHub `pyvideotrans` issue #624, `madeyexz/youtube2transcripts`) แก้ปัญหาเดียวกันด้วย
+     วิธีเดียวกันตรงกันหมด: **ตัดไฟล์เสียงเป็นชิ้นสั้นๆก่อนส่ง Gemini แล้วคำนวณ timestamp เองจาก chunk
+     offset แทนที่จะเชื่อ timestamp สัมบูรณ์ที่ Gemini ประมาณเองสำหรับไฟล์ยาวทั้งไฟล์** — เขียนเสร็จแล้ว:
+     `backend/audio_chunking.py` (ใหม่ทั้งไฟล์ — `plan_chunks()`/`split_into_chunks()` ผ่าน ffmpeg
+     subprocess/`merge_chunk_segments()` ตัดซ้ำที่รอย overlap ด้วย midpoint cut), `config.py` เพิ่ม
+     `AUDIO_CHUNK_SECONDS=600`/`AUDIO_CHUNK_OVERLAP_SECONDS=30`, `audio_native.py` แยก
+     `_transcribe_one_file()` ออกมาใช้ร่วมกัน + `transcribe_meeting_audio()` orchestrate chunking
+     (ไฟล์สั้นกว่า 1 chunk ไม่ตัดเลย คงพฤติกรรมเดิมเป๊ะ) — ส่ง speaker context (label ที่เจอมาก่อน
+     หน้า) เข้า prompt ของ chunk ถัดๆไปเพื่อลดปัญหา label สลับข้าม chunk (soft mitigation เท่านั้น
+     ไม่รับประกัน 100%) — verify แล้วด้วย unit test จริงในsandbox (mock ffmpeg/Gemini calls): ไฟล์สั้น
+     ไม่ chunk เลย, ไฟล์ยาว 55:42 จริง (`meeting_1.m4a`) แบ่งได้ 6 chunks ถูกต้อง, offset/merge/
+     speaker-context/model aggregation logic ถูกต้องทุกกรณีทดสอบ — **ยังไม่เคย verify กับ Gemini API
+     จริง** (sandbox ไม่มี network ออก Google) รอผู้ใช้ทดสอบไฟล์จริงบนเครื่อง — ผลกระทบข้างเคียงที่คาด
+     ว่าดี: overlap 30 วิน่าจะช่วยลดปัญหา omission (13:46-16:48) ที่เจอแยกต่างหากใน session 3.17 ด้วย
+     เพราะรอยตัดแบบเดิม (ไม่มี overlap) คือจุดที่เนื้อหาหายง่ายที่สุด — **ข้อจำกัดที่ยังไม่แก้**: speaker
+     label ข้าม chunk อาจยังสลับได้บ้าง (ไม่มี merge step แบบ LLM เต็มรูปแบบเหมือน TDS's pipeline),
+     midpoint cut เสี่ยงตัดกลางประโยคตรงรอย chunk ได้ (ยอมรับความเสี่ยงนี้ไว้ก่อนตามที่บันทึกใน
+     `audio_chunking.py`'s docstring) **backend process ต้องมี ffmpeg ใน PATH แล้วตอนนี้ด้วย** (ดู
+     requirements.txt — เดิมมีแค่ audio_worker ที่ต้องใช้)
+     🐛✅ **พบบั๊กจริงจากการใช้งานจริงรอบแรก + แก้แล้ว (2026-08-05)**: ผู้ใช้อัปโหลดไฟล์ประชุมจริงยาว
+     1:38:45 (เกิน 10 นาที ทำให้ chunking ทำงานจริงเป็นครั้งแรก) รายงานว่า **"นาทีที่ 1-10 หายไปเลย"**
+     ในหน้า transcript ระหว่างเล่นเสียง — วิเคราะห์ด้วยข้อมูลจริงจาก `com_sec.db` (meeting id=2, mantra
+     3 verify) พบว่า **เนื้อหาไม่ได้หายจริง แค่ label เวลาผิด**: Gemini คืน `start_seconds`/
+     `end_seconds` ของ segment ช่วงกลาง chunk แรก (ประมาณนาทีที่ 1-9:40 ของไฟล์จริง) เป็น **หน่วยนาที**
+     (เช่น `1.1`, `9.6`) แทนที่จะเป็นวินาทีตาม schema ที่กำหนด — สลับหน่วยกลางคันภายในการตอบครั้งเดียว
+     (segment ก่อน/หลังช่วงนั้นในไฟล์ยังเป็นวินาทีปกติ) เป็นรูปแบบใหม่ของ "Gemini self-reported
+     timestamp ไม่น่าเชื่อถือ" (คนละอาการกับ proportional drift ที่เจอใน session 3.19 แต่ต้นเหตุ
+     เดียวกัน) — **ต้นเหตุที่แท้จริงคือบั๊กที่ผมเพิ่งใส่เองตอนจบ session 3.21**: เพิ่ม
+     `merged.sort(key=lambda seg: seg["start"])` เป็น "safety net" ท้าย `merge_chunk_segments()` โดย
+     สมมติว่าค่า timestamp เชื่อถือได้ — พอ Gemini คืนค่าผิดหน่วย (1.1) sort ก็เอาไปเรียงแทรกไว้ใกล้
+     ต้นไฟล์ (หลัง 0.0 ก่อน 52.4) ทำให้เนื้อหาที่ควรอยู่นาทีที่ 1-10 ถูกย้ายไปแสดง timestamp ~0:01-0:09
+     ทั้งหมด (formatSeconds คิดเป็นวินาทีตามตัวเลขที่มันเป็น) กลายเป็นว่า UI มองไม่เห็นเนื้อหาช่วงนั้น
+     ตอน seek ไปนาทีที่ 1-10 จริง — **แก้โดยตัด `.sort()` ออกทั้งหมด**: ลำดับที่ Gemini คืนมาใน array
+     (ลำดับการ generate จริงตามเวลาเสียงเสมอ) น่าเชื่อถือกว่าค่าตัวเลข timestamp เอง ต่อให้บางครั้งใส่
+     หน่วยตัวเลขผิด ลำดับที่ส่งออกมาก็ยังถูกต้อง — ไม่ sort จึงคง reading order ที่ถูกต้องไว้ได้ verify
+     แล้วด้วย unit test ใหม่ (จำลองเคส buggy-minutes เหมือนที่เจอจริง ยืนยันว่าไม่ sort แล้ว ลำดับไม่ถูก
+     scramble) — ⚠️ **ยังไม่แก้**: ค่า timestamp ตัวเลขของ segment ที่โดนบั๊กนี้ยังผิดอยู่ (ป้าย MM:SS
+     ที่โชว์จะยังคลาดเคลื่อนสำหรับ segment ช่วงนั้น แม้เนื้อหา/ลำดับการอ่านจะถูกต้องแล้ว) — ยังไม่ได้ทำ
+     unit-detection heuristic (เช่น เจอค่า start ที่กระโดดถอยหลังกะทันหันแล้วลองคูณ 60 ดูว่าใกล้เคียง
+     ตำแหน่งที่ควรจะเป็นไหม) เพราะเพิ่มความซับซ้อน/ความเสี่ยงเดาผิดเพิ่ม — รอดูว่าเกิดถี่แค่ไหนจากการใช้
+     งานจริงก่อนตัดสินใจว่าคุ้มจะทำเพิ่มไหม
+     🐛 **พบเพิ่ม (2026-08-05, session 3.22) — ลองเขียน heuristic กู้ข้อมูลเดิมที่ scramble แล้ว
+     ไม่น่าเชื่อถือพอ**: ผู้ใช้ขอ script แก้ DB ตรง (กัน re-upload ซ้ำเปลืองเควตา — เจอ
+     `gemini-3.6-flash` ใกล้ RPD limit ฟรีเทียร์ 16/20 เพราะ chunking ทำให้ 1 meeting ยาวเรียก Gemini
+     หลายรอบ) ทดลอง 2 เวอร์ชัน: (1) heuristic หลวม (เทียบความเร็วพูดสมมติว่าเป็นวินาที ถ้าเร็วเกินคน
+     ให้เดาว่าจริงๆเป็นนาที) — จับ false positive กับ segment ท้ายไฟล์ที่ถูกอยู่แล้ว (เช่น
+     start=5571.2 จริง ถูกจับผิดว่าต้องคูณ 60 ทั้งที่ถูกอยู่แล้ว) เสี่ยงทำข้อมูลถูกพังเพิ่ม (2)
+     heuristic เข้ม (เพิ่มเงื่อนไข start×60 ต้องไม่เกินความยาวไฟล์จริง) — ปลอดภัยขึ้นไม่มี false
+     positive แล้ว แต่จับได้แค่ 16/52 segment ที่เสียจริง (segment สั้นๆ 1-3 คำ ความเร็วพูดคำนวณ
+     แกว่งเกินเดาหน่วยแม่นๆ) — **สรุป: กู้คืนข้อมูลที่ scramble แล้วให้ถูก 100% เป็นไปไม่ได้** เพราะ
+     ลำดับ array ดั้งเดิมจาก Gemini (ที่ถูกต้องเสมอ ต่อให้ตัวเลขผิดหน่วย) ถูกเขียนทับไปแล้วตอน sort
+     — ถามผู้ใช้ผ่าน AskUserQuestion แล้วเลือก **รีเซ็ต meeting ทิ้งแทนเพราะเป็น test data** (ตรงกับ
+     ธรรมเนียมโปรเจกต์นี้ตลอดมา — ไม่มี Alembic migration, MVP data ล้วนๆ ปลอดภัยที่จะรีเซ็ต) — เขียน
+     `backend/scripts/reset_meeting.py` (สคริปต์ maintenance ให้ผู้ใช้รันเองบนเครื่องจริง ไม่เรียก
+     Gemini เลยไม่เปลืองเควตา) verify แล้วด้วย throwaway test DB ในแซนด์บ็อกซ์ (ไม่แตะ com_sec.db
+     จริง) ผ่านครบ: set status="failed" + ล้าง transcript_segments_json/transcription_model_used/
+     speaker_mapping_json เป็น None แต่**ไม่ลบ audio_filename** (ไฟล์เสียงต้นฉบับยังอยู่ ไม่ต้อง
+     อัปโหลดใหม่จากเครื่อง แค่กด Re-upload เลือกไฟล์เดิมซ้ำได้)
+     ✅ **เพิ่มปุ่มเลือกโมเดล Gemini เองตอน upload/re-upload (2026-08-05, ผู้ใช้ขอ)**: ที่มา —
+     chunking ทำให้ 1 meeting ยาวเรียก Gemini หลาย request (1/chunk) แทนที่จะเป็น 1/meeting เจอ RPD
+     ของ `gemini-3.6-flash` ใกล้เต็มฟรีเทียร์บ่อย (screenshot ผู้ใช้: 16/20) ขณะที่โมเดลอื่นแทบไม่ได้
+     ใช้เลย — เปิดให้สลับโมเดลเองได้ตอน upload **ลำดับตามที่ผู้ใช้ระบุเอง**: 3.6 Flash → 3.5 Flash →
+     3.5 Flash-Lite → 3.1 Flash → 3.1 Flash-Lite → 2.5 Flash → 2.5 Flash-Lite — เขียนเสร็จแล้ว:
+     `config.py` เพิ่ม `GEMINI_TRANSCRIPTION_MODEL_CHOICES` (ordered list), `main.py` เพิ่ม
+     `GET /api/transcription_models` (mirror pattern `GET /api/templates`/
+     `docx_generation.list_templates()` เป๊ะ) + `POST /api/meetings/{id}/upload` รับ `model` form
+     field เพิ่ม validate กับ whitelist จริงเสมอ (400 ถ้าไม่ใช่ตัวเลือกจริง ไม่เชื่อ dropdown ฝั่ง
+     client เฉยๆ) thread ผ่าน `_process_meeting_audio_background()` → `transcribe_meeting_audio(...,
+     model_override=...)` (เพิ่ม param ใหม่ใน `audio_native.py` — ถ้าระบุ **ไม่มี fallback chain เลย**
+     ตั้งใจแบบนี้เพราะผู้ใช้เลือกเองมักเพราะโมเดลอื่นใน fallback โควต้าใกล้เต็มพอดี ไม่ต้องการ silent
+     fallback กลับไปโมเดลที่กำลังหลบอยู่) ไม่ระบุ = พฤติกรรมเดิมทุกประการ (fallback chain ปกติ) —
+     Frontend: `app.js` เพิ่ม `getModelOptionsHtml()` (fetch+cache ครั้งเดียว mirror
+     `loadTemplateOptions()`) เพิ่ม `<select class="model-select">` ข้างปุ่ม Upload/Re-upload ใน
+     `actionCellHtml()` (dashboard, ต่อแถว) และ `#reupload-model-select` ใน `meeting-detail.html`
+     (แสดง/ซ่อนพร้อม reupload button เสมอ) — verify แล้วด้วย FastAPI TestClient integration test เต็ม
+     (mock `transcribe_meeting_audio` กัน Gemini/ffmpeg จริง): GET models endpoint คืนลำดับ/default
+     ถูกต้อง, upload ไม่ระบุ model ยังทำงานปกติ (regression), upload ระบุ model ที่ถูกต้อง thread ผ่าน
+     จนบันทึกลง `transcription_model_used` ถูกต้อง, upload ระบุ model ปลอมได้ 400 ตามคาด — `node
+     --check`/HTMLParser ผ่าน frontend ทั้งหมด **ยังไม่เคย verify จริงในเบราว์เซอร์**
+     ⚠️ **อัปเดตจาก `/scrutinize` (2026-08-05, หาข้อมูลเพิ่มตามที่ผู้ใช้ขอ)**: ยืนยันแล้วว่าปัญหานี้
+     **เป็นบั๊กที่รู้จักกันแพร่หลายของ Gemini เอง ไม่ใช่ปัญหาเฉพาะโปรเจกต์นี้** — เจอกระทู้ Google AI
+     Developer Forum ("[BUG] Gemini 3 Flash and 3.1 Pro: progressive timestamp drift in audio
+     transcription", เปิดตั้งแต่มีนาคม 2026 ยังไม่ปิด/ยังไม่มี fix อย่างเป็นทางการ ณ มิถุนายน 2026 ตาม
+     reply ล่าสุดในเธรด) และ GitHub issue `googleapis/java-genai#774` ยืนยันตรงกับที่เราเจอเองใน session
+     3.13 ว่า `audioTimestamp(true)` throw `IllegalArgumentException` บน Gemini Developer API (รองรับ
+     เฉพาะ Vertex AI) — **ข้อมูลใหม่ที่น่าสนใจที่สุด**: benchmark จากบุคคลที่สามในเธรดเดียวกันรายงานว่า
+     **โมเดลตระกูล "Flash Lite" แม่นกว่ามาก** (คลาดระดับ sub-second ไม่มี progressive drift) เทียบกับ
+     "Pro"/"Flash" ตัวเต็ม (ที่ "thinking" ด้วย) ซึ่งคลาดสะสมได้ถึง 157s ในกรณีแย่สุดที่มีคนรายงาน — ยัง
+     ไม่ได้ทดสอบจริงกับไฟล์ประชุมของเรา (ต้อง `model_override` เป็น Flash Lite variant ลองดู) แต่เป็น
+     lead ที่ actionable ถ้าตัดสินใจจะเดินหน้าทาง (a) (ใช้ Gemini native ต่อ) — นอกจากนี้พบด้วยว่า Google
+     อัปเดตเอกสารทางการ (ai.google.dev/gemini-api/docs/audio, อัปเดตล่าสุด 2026-07-30) แนะนำ API ใหม่
+     `client.interactions.create()` แทน `client.models.generate_content()` แบบเดิม (ระบุว่าเป็น "Legacy")
+     — ตรวจแล้วว่า `google-genai==2.16.0` ที่ติดตั้งอยู่รองรับ `client.interactions` จริง แต่การย้ายไป API
+     ใหม่นี้ไม่น่าจะแก้ปัญหา drift ได้ (เป็นข้อจำกัดระดับโมเดล ไม่ใช่ API surface) — คงไว้เป็นข้อมูล
+     อ้างอิงสำหรับตัดสินใจ ไม่ใช่การแนะนำให้ย้าย API
+     ✅ **เขียนสคริปต์เปรียบเทียบ 7 โมเดลพร้อมกัน (2026-08-05, ผู้ใช้ขอ)**: เพื่อตัดสินใจว่าจะใช้โมเดลไหน
+     จริงในโปรดักชัน (ต่อยอดจาก lead "Flash Lite แม่นกว่า" ด้านบน) และทดสอบว่า **รันหลายโมเดลพร้อมกันจาก
+     API key เดียวกันได้จริงไม่ชนกันไหม** (ถ้าได้จะช่วยลดเวลารอทดสอบเทียบโมเดลได้มาก) — สร้าง
+     `backend/scripts/compare_transcription_models.py` ใหม่: รับ `--audio` (ไฟล์เดียว แนะนำ ~10 นาที),
+     `--models` (comma-separated, default = ทุกตัวใน `GEMINI_TRANSCRIPTION_MODEL_CHOICES`), `--parallel`
+     (ใช้ `ThreadPoolExecutor` แทนวนทีละตัว), `--output-dir` — เรียก `transcribe_audio_native()` ตรงๆ
+     (ไม่ chunk เพราะไฟล์ 10 นาทีสั้นกว่า `AUDIO_CHUNK_SECONDS` อยู่แล้ว, ไม่มี fallback ต่อโมเดลเพราะ
+     ต้องการวัดผลแต่ละตัวจริงๆ) เก็บต่อโมเดล: เวลา, จำนวน segment, จำนวนตัวอักษร, speaker ที่เจอ,
+     segment เต็มทั้งหมด → เขียนเป็น JSON แยกไฟล์ต่อโมเดล + พิมพ์ตารางสรุปเทียบกัน — ออกแบบให้แต่ละโมเดล
+     fail ได้โดยไม่ทำให้โมเดลอื่นที่กำลังรันขนานอยู่พังตาม (`try/except` กว้างรอบ `_run_one_model()`)
+     **ต้องรันบนเครื่องจริงของผู้ใช้เท่านั้น** (sandbox ไม่มี network ออก Google) — verify แล้วด้วย
+     `py_compile`/`pyflakes` ผ่าน + mock unit test เต็ม (จำลอง `transcribe_audio_native` ไม่เรียก Gemini
+     จริง): sequential mode คงลำดับตาม `model_ids` ที่ส่งเข้ามา, parallel mode เรียกครบทุกโมเดลจริงแล้ว
+     จัดเรียงผลลัพธ์กลับตามลำดับเดิมเสมอ (ไม่สลับตามความเร็วที่แต่ละ future เสร็จ), โมเดลที่ throw
+     `AudioNativeError` หรือ exception อื่นที่ไม่คาดคิด ไม่ทำให้โมเดลอื่นในชุดเดียวกันพังตาม (ทดสอบทั้ง 2
+     แบบพร้อมกัน), `write_results()`/`print_summary_table()` ทำงานถูกต้อง — **ยังไม่เคยยิง Gemini จริง
+     สักครั้ง** ผู้ใช้ต้องรันเองพร้อมไฟล์ทดสอบ ~10 นาทีจริง
+     ✅ **อัปเดต (2026-08-05, session 3.26)**: ตัดคลิปทดสอบจริงให้จาก `meeting_2.m4a` (10 นาทีสุดท้าย,
+     re-encode 16kHz mono WAV) → `backend/test_audio/meeting_2_last10min.wav` — เพิ่ม `--delay` (หน่วง
+     ก่อนเริ่มงานโมเดลถัดไป กัน RPM burst ตอน `--parallel`, ดีฟอลต์ 0 = ไม่กระทบพฤติกรรมเดิม) และตาราง
+     เทียบผลลัพธ์ทีละวินาที (`comparison_by_second.csv`, แถว=วินาที คอลัมน์=โมเดล เปิดใน Excel ได้ทันที)
+     — รัน `/scrutinize` กับโค้ดทั้งไฟล์แล้วพบ 2 จุดจริง แก้ทั้งคู่: (1) **WARNING** CSV/formula injection
+     เชิงป้องกัน (Excel ตีความเซลล์ที่ขึ้นต้นด้วย `= + - @` เป็นสูตร) — เพิ่ม `_csv_safe()` ป้องกันไว้
+     แม้ปัจจุบันเซลล์จะขึ้นต้นด้วย `[speaker]` เสมออยู่แล้วจึงยังไม่ใช่ช่องโหว่จริง แต่กันไว้เผื่อฟอร์แมต
+     เปลี่ยนในอนาคต (2) **WARNING** `--models ""` (หรือทุก token ว่างหลัง strip) + `--parallel` จะทำให้
+     `ThreadPoolExecutor(max_workers=0)` raise `ValueError` อ่านไม่รู้เรื่อง — เพิ่ม guard เช็ค
+     `model_ids` ว่างแล้ว exit พร้อมข้อความชัดเจนก่อนถึงจุดนั้น — verify ผ่านทั้ง py_compile/pyflakes +
+     mock unit test เพิ่ม (delay stagger sequential/parallel, `_csv_safe` truncation, bracket-prefix
+     confirmation, empty-models guard logic) ทุก assertion ผ่าน — **ยังไม่เคยยิง Gemini จริง** เช่นเดิม
+     ✅ **ผู้ใช้รันจริงแล้ว (2026-08-05, session 3.27)** — ผลสรุป: `gemini-3.6-flash`/`gemini-3.5-flash`/
+     `gemini-3.5-flash-lite`/`gemini-3.1-flash-lite`/`gemini-2.5-flash` เรียกได้จริงทั้งหมด,
+     `gemini-2.5-flash-lite` เจอ 503 (server โหลดสูงชั่วคราว, ยังสรุปไม่ได้), **`gemini-3.1-flash` ไม่มี
+     อยู่จริง (404)** ผู้ใช้ยืนยันให้แก้เป็น `gemini-3-flash` — แก้ใน `config.py` แล้ว (ชื่อโมเดลใหม่ยังไม่
+     เคย verify ยิงจริง) **finding สำคัญที่ขัดกับ research เดิม (session 3.20)**: drift ratio จริงจากไฟล์
+     10 นาที (600s) — `3.6-flash` +26.5% (น้อยสุด), `3.5-flash-lite` +66.3% (แย่สุด) — Flash Lite
+     กลับ drift แย่กว่าตัวเต็ม ตรงข้ามกับที่กระทู้ต่างประเทศรายงานไว้ (n=1 ไฟล์ ยังไม่ใช่ข้อสรุปทั่วไป) —
+     speaker_count แกว่งมาก (2-8 คน) ระหว่างโมเดล — ดู handoff.md 3.26/3.27 สำหรับตารางเต็ม
+     ✅ **ขยาย sample size (2026-08-05, session 3.28)**: ตัดไฟล์ทดสอบเพิ่ม 2 ไฟล์จาก `meeting_1.m4a`
+     (ช่วงเปิด+ปิดประชุม) รวมเป็น 3 clip จาก 2 ไฟล์ต้นฉบับต่างกัน — เขียน
+     `backend/scripts/compare_transcription_models_batch.py` ใหม่ (reuse ฟังก์ชันจาก
+     `compare_transcription_models.py` ตรงๆ) รันเทียบโมเดลข้ามหลายไฟล์รวดเดียว + รวม **drift ratio**
+     (`max(segment end)/duration จริง`) เป็นตาราง mean/min/max ข้ามไฟล์ (`batch_drift_summary.csv`) —
+     verify ผ่าน py_compile/pyflakes + mock test เต็ม (2 ไฟล์×3 โมเดลจำลอง, isolate โมเดล fail,
+     aggregate คำนวณถูกต้อง) — **ยังไม่เคยยิง Gemini จริง** รอผู้ใช้รันเองบนเครื่องจริง
+     ✅ **ผู้ใช้รัน batch จริงแล้ว (2026-08-05, session 3.29)** — ไม่มีโมเดลไหนชนะชัดเจนข้าม 3 ไฟล์,
+     `gemini-3-flash` (แก้จาก 3.1-flash ไปรอบก่อน) ยัง 404 อยู่ดี, `gemini-2.5-flash-lite` fail 2/3
+     ไฟล์คนละแบบ — ดู handoff.md 3.29 สำหรับตารางเต็ม
+     ✅ **แก้ `gemini-3-flash` → `gemini-3-flash-preview` (2026-08-05, session 3.30)** — ค้น official
+     docs พบว่าเป็น Preview model ต้องมี suffix เสมอ — สำรวจ Gemini Live API (real-time) ตามที่ผู้ใช้
+     ถามด้วย แต่พบ 2 hard blocker จากเอกสาร (ไม่มี diarization, session cap 15 นาที) ก่อนเขียน spike
+     ผู้ใช้เลือกพอแค่นี้ กลับมาแก้ config แทน — `gemini-3-flash-preview` **ยังไม่เคย verify ยิงจริง**
+     ดู handoff.md 3.30
+     ✅ **แก้ proportional timestamp drift ที่ยังเหลืออยู่แม้ตัด chunk 10 นาทีแล้ว (2026-08-05, session
+     3.31, `/scrutinize`)** — ผู้ใช้สังเกตว่า `batch_drift_summary.csv` (session 3.28-3.29) ยังโชว์
+     drift ratio คลาดมากแม้ทุกไฟล์ทดสอบยาวแค่ ~10 นาที (เท่ากับ `AUDIO_CHUNK_SECONDS` พอดี ไม่ถูกตัด
+     ซ้ำ) เช่น `gemini-3.6-flash` เฉลี่ย 1.633 (คลาด 63%) — สรุปว่า **การตัด chunk ลดได้แค่ขนาดความ
+     เสียหายสูงสุดต่อไฟล์ (absolute) ไม่ได้ลดสัดส่วนที่คลาดต่อ chunk เลย (relative)**: บั๊ก proportional
+     drift เดิม (session 3.19) เกิดซ้ำในทุก chunk เท่าๆกัน ไม่ใช่แค่ไฟล์ยาวทั้งไฟล์แบบที่คิดไว้ตอน
+     ออกแบบ chunking ครั้งแรก — **แก้ด้วย `audio_chunking.rescale_chunk_segments()`** (ฟังก์ชันใหม่):
+     ใช้ความยาว chunk จริงที่รู้แน่นอน 100% (จาก ffmpeg `-t`/ffprobe ไม่ใช่ที่ Gemini ประมาณ) เป็น
+     ground truth ปรับ timestamp ทุก segment ในสัดส่วนเดียวกัน (`ratio = known_duration /
+     observed_max_end`) สมเหตุสมผลเพราะ session 3.19 พิสูจน์แล้วว่า drift เป็นสัดส่วนคงที่ตลอดช่วงที่วัด
+     (นาทีที่ 6 vs นาทีที่ 55 ของไฟล์เดียวกัน ratio ใกล้กันมาก: 1.62 vs 1.675) — **แก้เฉพาะกรณี
+     overshoot** (เกินความยาวจริง >15%, ปรับได้ผ่าน `overshoot_threshold`) **ไม่แก้กรณี undershoot**
+     เพราะเป็นปัญหาคนละ class (undershoot ส่วนใหญ่ = ถอดเสียงไม่ครบจริง ไม่ใช่แค่ประมาณเวลาผิดสัดส่วน —
+     rescale จะไปยืดเนื้อหาที่ถูกอยู่แล้วให้ timestamp ผิดเพิ่มแทน) — ต่อสายเข้า
+     `audio_native.py::transcribe_meeting_audio()` ทั้ง 2 branch (ไฟล์สั้นไม่ตัด chunk ก็ apply เหมือน
+     กัน ใช้ `total_duration` เป็น known duration, ไฟล์ยาวตัด chunk แล้ว apply ต่อ chunk ก่อนบวก
+     `offset_seconds`) เพิ่ม field `AudioChunk.duration_seconds` เก็บความยาวจริงต่อ chunk ไว้ใช้
+     **Verify ด้วยข้อมูลจริง (mantra 3, ไม่ใช่แค่ mock)**: เขียน `scripts/verify_timestamp_rescale.py`
+     replay ผลลัพธ์ Gemini จริงที่เก็บไว้แล้วจาก batch test เดิม (session 3.28-3.29, ไม่เรียก Gemini
+     ใหม่เลย) เทียบกับความยาวไฟล์จริงที่วัดด้วย ffprobe จริงในนี้ — ผล: 6/14 รายการเข้าเงื่อนไข rescale,
+     drift เฉลี่ยของรายการที่ rescale ลดจาก 1.585 → **1.000 พอดี** ทุกรายการ (รวม `gemini-3.6-flash`
+     ดีฟอลต์ตัวหลัก: 1.667/1.598 → 1.000 ทั้งคู่) ส่วนรายการ undershoot (`gemini-3.1-flash-lite`,
+     `gemini-2.5-flash-lite`, `gemini-3.5-flash` บางไฟล์) ไม่ถูกแตะตามที่ออกแบบไว้ — verify เพิ่มด้วย
+     `py_compile`/`pyflakes` ผ่านทุกไฟล์ + ทดสอบ `plan_chunks()`/`split_into_chunks()` กับไฟล์เสียงจริง
+     ผ่าน ffmpeg จริงในนี้ (sandbox นี้มี ffmpeg ติดตั้งอยู่ต่างจาก session ก่อนๆที่บันทึกไว้ว่าไม่มี) —
+     **ยังไม่เคย verify ผ่าน `transcribe_meeting_audio()` เต็ม flow จริงบนเครื่อง** (สคริปต์ verify
+     ทดสอบแค่ตรรกะ rescale เดียว ไม่ทดสอบ Gemini call จริงของ production path) — ผู้ใช้ควรอัปโหลด/
+     re-upload ไฟล์ประชุมจริงอีกครั้งเพื่อยืนยัน click-to-seek/highlight (session 3.15) แม่นขึ้นจริง
+     **Key Files**: `backend/audio_chunking.py` (เพิ่ม `rescale_chunk_segments()` + field
+     `AudioChunk.duration_seconds`), `backend/audio_native.py` (เรียก rescale ทั้ง 2 branch),
+     `backend/scripts/verify_timestamp_rescale.py` (ใหม่ — เครื่องมือ replay ข้อมูลจริงถาวร ใช้ซ้ำได้
+     ทุกครั้งที่มีผลทดสอบโมเดลใหม่)
+     ✅ **เพิ่ม checkpoint/resume ต่อ chunk (2026-08-05, session 3.32)** — ผู้ใช้ทดสอบจริงไฟล์ 11 chunk
+     เจอ chunk 7 พัง (503 "high demand" ชั่วคราว ตรงกับ backend process restart พอดี — สงสัย
+     `reload=True` แต่ยังไม่ยืนยัน 100%) ทำให้ chunk 1-6 ที่เพิ่ง transcribe สำเร็จ (เปลืองเควตาจริงแล้ว)
+     หายหมดต้องเริ่มใหม่ทั้งไฟล์ — เพิ่ม `audio_chunking.save_checkpoint()`/`load_checkpoint()`/
+     `clear_checkpoint()` เขียนความคืบหน้าลง `backend/checkpoints/<meeting_id>.json` แบบ atomic ทุกครั้ง
+     ที่ 1 chunk สำเร็จ, `transcribe_meeting_audio(checkpoint_key=...)` โหลด/ข้าม chunk ที่ทำแล้วตอน
+     resume, `main.py` ส่ง `checkpoint_key=str(meeting_id)` มา (re-upload ไฟล์เดิมไปยัง meeting เดิม =
+     resume อัตโนมัติ, plan ไม่ตรง เช่นไฟล์เปลี่ยน = ทิ้ง checkpoint ปลอดภัย) — verify ด้วย mock test
+     เต็ม (stub google.genai, จำลอง chunk fail แล้ว resume) ยืนยันว่า attempt ที่ 2 เรียก Gemini เฉพาะ
+     chunk ที่เหลือจริง ไม่เรียกซ้ำ chunk ที่สำเร็จแล้ว — **ไม่ช่วย run ที่พังไปแล้วรอบนี้** (chunk 1-6
+     เดิมเสียเควตาไปแล้วก่อนมี feature นี้ ต้อง re-upload ใหม่ทั้งไฟล์อีกครั้ง) — ⚠️ ยังไม่ตัดสินใจ:
+     ปิด `reload=True` ไหม, ขยาย `GEMINI_MODEL_TRANSCRIPTION_FALLBACK` จาก 1 โมเดลเป็นหลายตัวไหม (เรื่อง
+     redundancy คนละประเด็นกับการเลือกโมเดลที่ดีที่สุดที่ปิดไปแล้ว) — ดู handoff.md session 3.32
+     ✅ **แก้ + verify จริงครบแล้ว (2026-08-07, session 3.33, `/debug-mantra`)**: พบว่า fallback chain
+     3 โมเดลที่เพิ่งขยายไปใน session 3.32 **ใช้งานจริงไม่ได้เลยสักครั้ง** เพราะ dashboard's
+     `getModelOptionsHtml()` ไม่เคยมี option ค่าว่าง pre-select โมเดล primary ไว้เสมอ → ทุก upload/
+     re-upload ส่ง `model` override มาเงียบๆ 100% → `audio_native.py:172` ปิด fallback ทิ้งทุกครั้ง —
+     แก้ที่ frontend เท่านั้น (`app.js`/`meeting-detail.html`) เพิ่ม option ค่าว่างเป็นดีฟอลต์ + tooltip
+     เตือน — **verify จริงกับ Gemini production**: re-upload ไฟล์ 3343s/6 chunk เข้า meeting 3 ซ้ำ, log
+     ยืนยัน checkpoint resume (ข้าม 4 chunk) + chunk 5 พัง 503 บน `gemini-3.6-flash` แล้วสลับไป
+     `gemini-3.5-flash` สำเร็จจริงในทันที + จบครบ 6 chunk (`meeting 3 transcribed ด้วยโมเดล=
+     gemini-3.6-flash+gemini-3.5-flash ใน 133.4s, 231 segments`) — ดู handoff.md session 3.33
+     สำหรับรายละเอียดเต็ม ไม่มีงานค้างเรื่อง checkpoint/fallback อีกแล้ว
 - `[ ]` ⚠️ **พบจาก `/scrutinize` (2026-08-02), ยังไม่ได้แก้ — ต้องทำก่อนใช้งานจริง**:
   1. `[x]→🔄` **เดิม: แก้แล้ว — ทดสอบ multi-chunk path จริงแล้ว (2026-08-02, ก่อน redesign)**: ลด `ASR_CHUNK_SECONDS=2` ชั่วคราวแล้วยิงไฟล์ทดสอบเดิมซ้ำ พบว่าการตัดตามเวลาตายตัวตัดกลางประโยคได้จริง — **นี่คือสาเหตุที่เลือก redesign เป็นตัด ASR ทีละ diarization segment แทน** (ดูรายการด้านบน) แทนที่จะพยายาม merge chunk-level เข้ากับ speaker segment ทีหลัง — ⚠️ ข้อจำกัดใหม่ที่ยังไม่ได้ทดสอบจริง: การ **sub-split** segment ที่ยาวเกิน `ASR_MAX_SEGMENT_SECONDS` (คนพูดยาวต่อเนื่องไม่มีใครขัด) ยังตัดกลางประโยคได้เหมือนกัน แค่เกิดถี่น้อยกว่าเดิมมาก (เฉพาะ segment ยาว ไม่ใช่ทุกชิ้น)
   2. **`audio_worker/processed/*.wav` ไม่เคยถูกลบ** — ทุกไฟล์ที่ประมวลผลจะเก็บสำเนา 16kHz mono WAV ไว้ถาวรไม่มีวันลบเอง ดิสก์จะโตไม่มีที่สิ้นสุดถ้าใช้งานสม่ำเสมอ (คนละเรื่องกับ retention policy ของไฟล์ต้นฉบับด้านล่าง แต่เป็นปัญหาคลาสเดียวกัน)
-  3. **ไม่มี timeout/watchdog ถ้า diarization หรือ ASR ค้าง** — โปรเจกต์นี้เคยเจอ process ค้าง 10+ นาทีมาแล้วจริงๆ (ดู Module 0 root cause เดิม) ถ้าเกิดซ้ำใน audio_worker จะถือ `_pipeline_lock` ค้างตลอดไป ทำให้ worker รับงานใหม่ไม่ได้อีกเลยจนกว่าจะ restart process เอง
+  3. `[x]→🔄` **ไม่มี timeout/watchdog ถ้า diarization หรือ ASR ค้าง** — โปรเจกต์นี้เคยเจอ process ค้าง 10+ นาทีมาแล้วจริงๆ (ดู Module 0 root cause เดิม) ถ้าเกิดซ้ำใน audio_worker จะถือ `_pipeline_lock` ค้างตลอดไป ทำให้ worker รับงานใหม่ไม่ได้อีกเลยจนกว่าจะ restart process เอง — **แก้บางส่วนแล้ว (2026-08-05)**: กรณีเฉพาะ "backend restart กลางทางที่ meeting กำลังประมวลผลอยู่" (ผู้ใช้เจอจริงหลัง wiring Gemini native audio — meeting ค้าง `status="processing"` ตลอดกาล, ปุ่ม Re-upload หายไปเพราะ `app.js` โชว์ปุ่มนี้เฉพาะ `draft`/`failed`) — เพิ่ม `backend/main.py`'s `_recover_stuck_processing_meetings()` เรียกครั้งเดียวตอน startup (หลัง `init_db()`) auto-mark meeting ที่ค้าง `processing` เป็น `failed` พร้อมข้อความอธิบาย verify ด้วย integration test จริงใน sandbox (สร้าง SQLite DB แยก, insert meeting `status="processing"`, `import main`, ยืนยัน auto-fix) ผ่านแล้ว **ยังไม่ครอบคลุมกรณี background task ค้างจริงระหว่าง backend ยังรันอยู่** (กรณีนั้นยังพึ่ง `GEMINI_TRANSCRIPTION_TIMEOUT_MS`/ยังไม่มี watchdog เต็มรูปแบบ) — ดู handoff.md session ล่าสุดสำหรับรายละเอียดเต็ม
+     ⚠️ **ขยายเพิ่ม (2026-08-05, พบจาก `/scrutinize` รอบนี้เอง — ไม่ใช่จากผู้ใช้รายงาน)**: `status="uploaded"`
+     ค้างตลอดกาลได้ด้วยเหตุผลเดียวกันทุกประการ — ถ้า backend restart/reload ในช่วงสั้นๆ ระหว่าง
+     `upload_meeting_audio()` commit สถานะ "uploaded" กับตอนที่ `BackgroundTasks` เพิ่ง dispatch งานจริง
+     (Starlette รันหลังส่ง response แล้ว) background task จะไม่มีวันเริ่มเลย และ `app.js`'s
+     `reuploadBtn` ก็ไม่โชว์ตอน "uploaded" เช่นกัน (โชว์เฉพาะ transcribed/failed) → ค้างที่ placeholder
+     "อัปโหลดไฟล์แล้ว รอเริ่มประมวลผล..." ตลอดกาล — **แก้แล้ว**: ขยาย
+     `_recover_stuck_processing_meetings()` ให้ครอบคลุม `status.in_(["processing", "uploaded"])` (เดิม
+     กรองแค่ "processing") ตรรกะเดียวกันทุกประการ (เป็นไปไม่ได้ที่ background task จะยังไม่ถูก
+     dispatch จริงถ้า backend เพิ่ง start ใหม่) verify ด้วย `py_compile` แล้ว
+     ⚠️⚠️ **CRITICAL พบจาก `/scrutinize` รอบนี้ — ยังไม่แก้ รอผู้ใช้ตัดสินใจ**: `main.py`'s
+     `if __name__ == "__main__":` เรียก `uvicorn.run("main:app", ..., reload=True)` — auto-reload เปิด
+     อยู่จริง หมายความว่า **ทุกครั้งที่ไฟล์ `.py` ในโฟลเดอร์ backend ถูกแก้/save (รวมถึงตอนที่ผมแก้โค้ด
+     ให้ผู้ใช้ตลอด session นี้เอง) uvicorn จะ kill+restart worker process ทันที** ถ้าจังหวะนั้นมี meeting
+     กำลัง transcribe จริงอยู่ (เรียก Gemini จริงใช้เวลาเป็นนาทีได้สำหรับไฟล์ยาว) background task จะถูก
+     ฆ่ากลางทางแบบเงียบๆ แล้วพอ `_recover_stuck_processing_meetings()` (ของ session นี้เอง) รันตอน
+     restart จะ mark meeting นั้นเป็น "failed" ทั้งที่ผู้ใช้ไม่ได้ตั้งใจ restart backend เลย แค่บังเอิญมี
+     ไฟล์ถูกแก้ระหว่างนั้น — **สิ่งนี้อาจอธิบายส่วนหนึ่งของเคส "processing ค้าง" ที่เจอเองก่อนหน้านี้ใน
+     session นี้ด้วย** เพราะมีการแก้ไฟล์ backend หลายรอบระหว่างที่ทดสอบจริง — ยังไม่ได้แก้เพราะเป็น
+     decision ที่กระทบ dev workflow (ปิด `reload=True` ทำให้ต้อง restart เองทุกครั้งที่แก้โค้ด) —
+     **ถามผู้ใช้แล้ว (2026-08-05, ผ่าน AskUserQuestion): เลือก "ยอมรับความเสี่ยงไว้ก่อน"** — คง
+     `reload=True` ไว้เหมือนเดิม ไม่แก้โค้ด เพราะตอนนี้ผลกระทบเห็นชัด (status="failed" มีปุ่ม re-upload)
+     ไม่ค้างเงียบแบบเดิมที่เจอก่อน session 3.17 แล้ว — ถ้าเจอเคส meeting fail แบบไม่ทราบสาเหตุอีกระหว่าง
+     dev อยู่ ให้สงสัยเรื่องนี้ก่อน (เช็คว่ามีการแก้ไฟล์ backend ระหว่างนั้นหรือไม่)
+     ✅ **กลับคำตัดสินใจแล้ว — ปิดจริง (2026-08-05, session 3.32, ทันทีหลังบันทึกข้างบน)**: ความเสี่ยง
+     ที่ "ยอมรับไว้ก่อน" นี้เกิดขึ้นจริงในเซสชันเดียวกัน (11-chunk job ตายกลางทางที่ chunk 7 ตรงกับ
+     process restart เสียเควตา chunk 1-6 ไปฟรี) ผู้ใช้ยืนยัน "ปิดถาวรตอนนี้เลย" — `main.py`'s
+     `uvicorn.run()` เป็น `reload=False` ถาวรแล้ว (ยืนยันจาก source จริงอีกครั้ง 2026-08-07: บรรทัด
+     สุดท้ายของไฟล์) ต้อง restart backend เองทุกครั้งที่แก้โค้ด `.py` จากนี้ไป — **หมายเหตุ mantra 4
+     (cross-reference, พบตอนไล่ task ค้างรอบนี้)**: บันทึกด้านบนที่บอกว่า "คง reload=True ไว้" ยังไม่ได้
+     ลบ/แก้ตอนนั้น ทำให้ดูเหมือนยังเป็นปัญหาเปิดอยู่ทั้งที่ปิดไปแล้วจริง — เก็บบันทึกเดิมไว้เป็นบริบท
+     ประวัติการตัดสินใจ (กลับคำ) แต่เพิ่มบรรทัดนี้กันอ่านแล้วเข้าใจผิดว่ายังไม่แก้
   4. **`meeting_id`/`filename` เพิ่ง validate กัน path traversal พื้นฐานแล้ว** (เช็ค `..`/`/`/`\\`) แต่ worker ยังเป็น HTTP service เปิดบน localhost ไม่มี auth ใดๆเลย — ยอมรับได้ตอนนี้ (เรียกจาก backend เท่านั้น) แต่ต้องทบทวนถ้าจะเปิดให้เรียกจากที่อื่น
 - `[x]` เก็บไฟล์เสียง/วิดีโอต้นฉบับไว้ให้ FastAPI serve กลับมาเล่นย้อนหลังได้ (requirement ใหม่จากฟีเจอร์ transcript-sync) — **ทำแล้ว (2026-08-04)**: ไฟล์ต้นฉบับถูกเก็บไว้ที่ `backend/uploads/` อยู่แล้วตั้งแต่ Module 1 (ไม่เคยลบทิ้ง) เพิ่ม `GET /api/meetings/{id}/audio` ให้ stream กลับผ่าน `FileResponse` (รองรับ HTTP Range/206 สำหรับ seek ในตัวจาก Starlette เอง ไม่ต้องเขียน chunking เอง) ดู task.md Module 6
 - `[ ]` ⚠️ **นโยบายเก็บรักษาไฟล์เสียง/วิดีโอต้นฉบับ (ยังไม่ตัดสินใจ, พบจาก `/scrutinize`)**: ต้องกำหนด retention period (เช่น ลบอัตโนมัติ N วันหลัง Approve), encryption at rest, และสิทธิ์เข้าถึงระดับไฟล์ (ไม่ใช่แค่ metadata) ก่อนเริ่มเก็บไฟล์จริง — องค์กรมี HR_PDPA_Policy/Data_Breach_Policy ใช้บังคับจริงอยู่แล้ว การเก็บเสียงประชุมบอร์ดโดยไม่มีนโยบายชัดเจนเสี่ยงขัด policy ตัวเอง
@@ -355,6 +684,7 @@ detection ในโค้ดของ Com Sec เองเพื่อไม่�
 - `[x]` ⚠️→✅ **ฟีเจอร์ใหม่: Synced Audio/Video Player + Transcript Panel** (แบบดูวิดีโออบรมออนไลน์ที่มี script ด้านขวา) — อ้างอิงแพทเทิร์นจาก `meetily/frontend` (`AudioPlayer.tsx`/`useAudioPlayer.ts`/`TranscriptView.tsx`, ตรวจซอร์สจริงแล้ว `AudioPlayer.tsx` เป็นไฟล์ว่างเปล่า ใช้แค่ `useAudioPlayer.ts`+`TranscriptView.tsx` เป็นแนวทาง) เขียนใหม่ด้วย HTML5 `<audio>` + `ontimeupdate` แทน Tauri-specific AudioContext/`invoke('read_audio_file')` เดิม (เว็บ same-origin ไม่มีข้อจำกัดแบบ Tauri ให้ต้องอ้อม) — **ทำแล้ว (2026-08-04)**: Playback panel ใหม่ใน `meeting-detail.html` (นอก `main-content-grid` ตั้งใจ — โชว์ได้ตั้งแต่ status=uploaded ไม่ต้องรอ transcribed) ผูกกับ `transcript-container` เดิม 2 ทาง: (1) click บรรทัด transcript → seek `<audio>` ไปเวลานั้น+เล่นต่อ (2) `timeupdate` → ไฮไลต์บรรทัดที่กำลังเล่นอยู่ (`.transcript-line.active`, auto-scroll ถ้ายังไม่อยู่ในมุมมอง) ดู `app.js`'s `setupAudioPlayer`/`highlightActiveTranscriptSegment`/`meetingAudioUrl`
   - **สโคปที่ตัดออกตั้งใจ (ไม่ใช่ MVP นี้)**: video-only ไม่มี custom scrubber/theme (ใช้ native `<audio controls>` เหมือน pattern `input[type=file]` เดิมของโปรเจกต์ที่ปล่อย browser-native ไป), ไม่มี `<video>` element แยก (ไฟล์ต้นฉบับที่เป็นวิดีโอ เช่น Google Meet/Teams recording ยังเล่นได้ผ่าน `<audio>` เอง แค่ไม่เห็นภาพ — พอสำหรับ "ฟังย้อนหลัง" ตามที่ผู้ใช้ขอรอบนี้)
   - **RBAC**: `GET /api/meetings/{id}/audio` ผูก role เดียวกับ `MEETING_MANAGE_ROLES` (Com_Sec_Maker/Checker/Global_Admin) ผ่าน `require_role_for_audio_stream` ใหม่ใน `auth.py` (รับ token ผ่าน query string เพราะ `<audio src=...>` แนบ header เองไม่ได้ — ดู docstring เต็มใน `auth.py`/`main.py` สำหรับความเสี่ยงที่รู้อยู่แล้วเรื่อง token ใน query string ของ mock auth)
+  - **✅ live test จริงในเบราว์เซอร์ครั้งแรก (2026-08-05)**: click-to-seek ทำงานถูกต้อง — **บั๊ก CSS ที่พบ**: ผู้ใช้รายงาน "ไม่มีไฮไลต์เลย" เทรซโค้ด JS ทั้งหมด (`highlightActiveTranscriptSegment`/`timeupdate` binding) ไม่พบปัญหา logic ใดๆ — สาเหตุจริงคือ `.transcript-line.active` ใช้ `--secondary-cyan-deep` (#123B3A) เป็นพื้นหลัง ใกล้เคียงกับพื้นหลัง `.panel` (`--surface-color` #1C3936) มากจนแทบมองไม่เห็นด้วยตา (ไม่ใช่บั๊ก JS) — **แก้แล้ว**: เปลี่ยนเป็น `rgba(217, 177, 104, 0.18)` (โทนทองแบบโปร่งแสง จาก `--primary-gold` เดิมที่ใช้เป็น border-left อยู่แล้ว) ให้ตัดกับพื้นเข้มชัดเจน ยังอยู่ในธีม EMPIRE CI (`ComSecAI_Dashboard/style.css`) — ยังไม่ได้ verify จริงในเบราว์เซอร์ว่าสีใหม่มองเห็นชัดพอ
   - **Verify ที่ทำแล้ว**: `py_compile`/`pyflakes` สะอาด (backend), `node --check app.js` ผ่าน — **⚠️ ยังไม่เคยเปิดจริงในเบราว์เซอร์เลย** (เขียนจาก static analysis เหมือนงาน frontend อื่นๆของโปรเจกต์นี้ทุกครั้ง ต้องให้ผู้ใช้ทดสอบบนเครื่อง Windows จริง: เล่น/pause/seek ทำงานถูกไหม, click transcript แล้ว seek ตรงไหม, ไฮไลต์ตามเวลาจริงไหม, Board_Member โดน 403 จริงไหม)
 - `[x]` ✅ หน้าจอแก้ไข Transcript (ไม่บังคับ, ตามแผน Module 2) — **เขียนเสร็จแล้ว** (ดู Module 2 รายการด้านบนสำหรับรายละเอียดเต็ม + handoff.md 3.8) — Stitch ไม่ได้ออกแบบมาด้วยแต่เพิ่มเข้าไปเองจนครบ ⚠️ ยังไม่ได้ทดสอบจริงในเบราว์เซอร์ (รอผู้ใช้ verify)
 - `[x]` ✅ **หน้าใหม่: Policy & Board Document Search (Module 1 RAG — ไม่เคยมี UI มาก่อนเลยตั้งแต่เขียน backend เสร็จ, session 3.1)** — ผู้ใช้ส่ง brief (`stitch_brief_rag_search.md`) ไปออกแบบผ่าน Google Stitch (Antigravity) เอง ได้ `search.html` กลับมา (Tailwind CDN + Material Symbols — คนละ tech stack จาก 3 หน้าเดิมที่ใช้ plain CSS แต่แยกไฟล์กันเลยไม่ชนกัน) — **ทำแล้ว (2026-08-04)**: ต่อเข้ากับ `POST /api/rag/query`/`POST /api/rag/query_confidential` จริงผ่าน `app.js`'s `initSearchPage()`/`submitSearchQuery()`/`appendSearchAiBubble()` ตัดส่วนที่ Stitch ใส่มาเกินสโคป (sidebar เดิมมี "Confidential Vault"/"Templates"/"Help Center"/"Logout"/notifications/settings/avatar — ไม่มีหน้า/backend รองรับสักอย่าง เป็น dead link ทั้งหมด) เหลือแค่สิ่งที่ผูกกับฟีเจอร์จริง: role-select (แก้ `initRoleSelect()` ให้รองรับหลาย `.role-select` ในหน้าเดียว sync กันเอง — หน้านี้มี 2 ตัว mobile+desktop), scope selector 2 ชุด sync กัน (pill กลางจอ + sidebar link), "New Search" (reset ในหน่วยความจำ), loading state ที่มี elapsed-time counter (สำคัญเพราะ query ช้าได้ถึง ~30 นาที ดู `backend/rag.py`'s `RAG_WORKER_TIMEOUT_SECONDS`), sources card render จาก response จริง (`{response, sources:[{file_name, content}], tokens}`) — เพิ่ม nav link "Policy Search" ในหัวอีก 3 หน้าเดิมด้วย (เดิมไม่มีทางเข้าหน้านี้จากที่ไหนเลย)

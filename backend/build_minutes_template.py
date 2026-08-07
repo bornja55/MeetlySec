@@ -157,9 +157,15 @@ def _build_document(doc_title_prefix: str) -> "docx.Document":
     doc.add_paragraph()
 
     # ── วาระการประชุม (loop ผ่าน agenda_items) ──────────────────────────────────────────
+    # เลขวาระ (2026-08-07, ผู้ใช้ขอ — ดู models.py's MeetingAgendaItem.label docstring): เดิม
+    # hardcode prefix "วาระที่ {{ item.agenda_order }}" ตรงนี้ (index อัตโนมัติ 0,1,2,... เรียง
+    # ต่อเนื่องเสมอ ไม่รองรับวาระย่อยแบบ 3.1/3.2 หรือเลขข้ามที่ไม่เรียงต่อเนื่องตามธรรมเนียมบอร์ดจริง)
+    # เปลี่ยนเป็นพิมพ์ `{{ item.label }}` ตรงๆ ไม่เติม prefix อะไรให้เองอีกแล้ว — ผู้ใช้พิมพ์เต็มข้อความ
+    # เองในช่อง label ได้อิสระ (ดีฟอลต์ที่ backend เติมให้ถ้าไม่กรอกคือ "วาระที่ {ลำดับ}" อยู่แล้ว ดู
+    # main.py's _build_agenda_items() — หน้าตาเหมือนเดิมทุกประการถ้าไม่ได้ตั้งใจแก้เอง)
     _tag_p(doc, "{%p for item in agenda_items %}")
     para = doc.add_paragraph()
-    r1 = para.add_run("วาระที่ {{ item.agenda_order }}\t")
+    r1 = para.add_run("{{ item.label }}\t")
     _set_run_font(r1, bold=True)
     r2 = para.add_run("{{ item.description }}")
     _set_run_font(r2, bold=True)

@@ -32,6 +32,15 @@ Endpoints:
                                    "confidential_index_ready": bool}
                                ค้น BOD Minutes ที่ลับ — จำกัดเฉพาะ role ใน
                                CONFIDENTIAL_ALLOWED_ROLES เท่านั้น (403 ถ้าไม่ใช่)
+    POST /admin/rebuild_confidential_index
+                               -> {"success": bool, "message": "...", "document_count": N}
+                               rebuild ดัชนีเอกสารลับทั้งหมดจาก confidential_corpus/ ใหม่ทั้งก้อน
+                               (2026-08-07 เพิ่มเพื่อต่อสาย Approve → RAG index อัตโนมัติ — ดู
+                               confidential_rag.py::rebuild_index_from_corpus()) **ไม่มี auth
+                               เพิ่มเติมที่นี่**: worker ฟังที่ 127.0.0.1 เท่านั้น (ไม่เปิดสู่
+                               เครือข่ายภายนอก) ผู้เรียกได้มีแค่ backend หลัก (ผ่าน
+                               _archive_and_notify_background หลัง Checker approve เท่านั้น) —
+                               เชื่อ network isolation เป็นชั้นป้องกันเดียวกับ /query, /query_confidential
 
 รันแบบ standalone:
     venv\\Scripts\\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8766
@@ -223,6 +232,9 @@ class ConfidentialQueryBody(BaseModel):
     user_id: str
     role: str
     prompt: str
+    # session 3.37 — จำกัดผลลัพธ์ให้อยู่แค่การประชุมที่เลือกได้ (ผู้ใช้ขอผ่าน AskUserQuestion หลัง
+    # เจอปัญหาผลลัพธ์ปนกันข้ามการประชุม) None/ไม่ส่งมา = ค้นหาทุกเอกสารเหมือนเดิม (backward compatible)
+    meeting_id: str | int | None = None
 
 
 @app.get("/health")
@@ -267,12 +279,35 @@ def query_confidential(body: ConfidentialQueryBody, x_user_id: str | None = Head
     if not user_id:
         raise HTTPException(status_code=400, detail="missing user_id")
     try:
-        result = confidential_rag.handle_confidential_query(user_id, body.prompt)
+        result = confidential_rag.handle_confidential_query(
+            user_id, body.prompt, meeting_id=body.meeting_id
+        )
     except Exception as e:
         log(f"POST /query_confidential error: {type(e).__name__} - {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
     if "error" in result:
         return JSONResponse(status_code=502, content=result)
+    return result
+
+
+@app.post("/admin/rebuild_confidential_index")
+def rebuild_confidential_index():
+    """Rebuild ดัชนีเอกสารลับทั้งก้อนจาก confidential_corpus/ (sync function ธรรมดา — FastAPI
+    รันใน threadpool อัตโนมัติเพราะไม่ใช่ `async def` จึงไม่บล็อก event loop หลักระหว่างที่
+    embedding+indexing กำลังทำงานอยู่ ทำให้ /health, /query ยังตอบได้ปกติระหว่าง rebuild)
+
+    เรียกจาก backend/main.py's _archive_and_notify_background() หลัง Checker approve เอกสารแล้ว
+    เท่านั้น (ดู docstring ด้านบนของไฟล์นี้) ไม่ require ดัชนีทั่วไปพร้อม (_require_ready())
+    เพราะ rebuild ดัชนีลับไม่เกี่ยวกับดัชนีทั่วไปเลย — ปล่อยให้ rebuild ได้แม้ตอน worker เพิ่ง
+    startup ยังโหลดดัชนีทั่วไปไม่เสร็จ"""
+    try:
+        result = confidential_rag.rebuild_index_from_corpus()
+    except Exception as e:
+        log(f"POST /admin/rebuild_confidential_index error: {type(e).__name__} - {e}\n"
+            f"{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+    # success=False ที่นี่ไม่ใช่ error จริง (เช่น corpus ว่างเปล่า) — แค่ยังไม่มีอะไรให้ index
+    # เท่านั้น ยังคง HTTP 200 เสมอ ให้ผู้เรียก (backend) ดู success flag ในตัว body เอง
     return result
 
 

@@ -259,9 +259,15 @@ input:focus {
   background-color: rgba(172, 216, 217, 0.08);
 }
 /* ไฮไลต์บรรทัดที่กำลังเล่นอยู่ใน Audio Playback panel (ใหม่ 2026-08-04, ดู app.js's
-   highlightActiveTranscriptSegment) */
+   highlightActiveTranscriptSegment) — ⚠️ พบบั๊กจริง (2026-08-05, ผู้ใช้รายงาน "ไม่มีไฮไลต์เลย" หลัง
+   live test ครั้งแรก): เดิมใช้ `--secondary-cyan-deep` (#123B3A) เป็นพื้นหลัง แต่ `.panel`'s พื้นหลัง
+   คือ `--surface-color` (#1C3936) — สองสีนี้ใกล้กันมากจนแทบแยกไม่ออกด้วยตา (ไม่ใช่บั๊ก JS/logic เลย
+   ยืนยันแล้วว่า highlightActiveTranscriptSegment()/timeupdate wiring ทำงานถูกต้อง class "active"
+   ถูก toggle จริง แค่มองไม่เห็นเพราะสีตัดกันไม่พอ) — เปลี่ยนเป็นพื้นหลังโทนทอง (สีเดียวกับ
+   border-left ที่มีอยู่แล้ว) แบบโปร่งแสงแทน ให้ตัดกับพื้นเข้มชัดเจน ยังอยู่ในธีม EMPIRE CI เดิม
+   (ไม่เพิ่มสีใหม่ แค่ใช้ --primary-gold แบบ rgba แทน) */
 .transcript-line.active {
-  background-color: var(--secondary-cyan-deep);
+  background-color: rgba(217, 177, 104, 0.18); /* --primary-gold (#D9B168) ที่ 18% opacity */
   border-left-color: var(--primary-gold);
 }
 .speaker-name {

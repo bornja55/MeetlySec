@@ -1,0 +1,12 @@
+{
+  "model": "gemini-2.5-flash-lite",
+  "model_used_confirmed": null,
+  "success": false,
+  "elapsed_seconds": 194.3,
+  "segment_count": 0,
+  "total_chars": 0,
+  "speaker_count": 0,
+  "speakers": [],
+  "segments": [],
+  "error": "เรียก Gemini ไม่สำเร็จทุก model: Gemini (model=gemini-2.5-flash-lite) ไม่คืน structured output ที่ parse ได้"
+}

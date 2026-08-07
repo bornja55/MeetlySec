@@ -52,6 +52,7 @@ class RAGPipeline:
         user_id: str,
         search_scope: str = "general",
         role: str | None = None,
+        meeting_id: str | int | None = None,
     ) -> dict:
         """เรียก worker `/query` (search_scope="general") หรือ `/query_confidential`
         (search_scope="confidential") คืน dict {"response", "sources", "tokens", ...} ตรงจาก
@@ -60,13 +61,16 @@ class RAGPipeline:
 
         session key ที่ worker ใช้คือ user_id ที่ส่งมานี้ตรงๆ (ไม่ใช่ browser-tab session_id แบบ
         Local RAG เดิม — ตัดสินใจจาก handoff.md ข้อ 3.0.2 "เปลี่ยน session model... เป็นผูกกับ
-        authenticated user_id จริง")"""
+        authenticated user_id จริง")
+
+        `meeting_id` (session 3.37) — ใช้เฉพาะ `search_scope="confidential"` เท่านั้น จำกัดผลลัพธ์
+        ให้อยู่แค่การประชุมที่เลือก ไม่ระบุ = ค้นหาทุกเอกสารลับเหมือนเดิม"""
         if not user_id:
             raise RAGWorkerError("ไม่พบ user_id — ต้อง authenticate ก่อนเรียก RAG query")
 
         if search_scope == "confidential":
             path = "/query_confidential"
-            body = {"user_id": user_id, "role": role or "", "prompt": user_query}
+            body = {"user_id": user_id, "role": role or "", "prompt": user_query, "meeting_id": meeting_id}
         else:
             path = "/query"
             body = {"user_id": user_id, "prompt": user_query}
@@ -109,3 +113,38 @@ def _safe_detail(resp: httpx.Response) -> str:
 
 # Singleton instance — เก็บชื่อเดิมจาก stub เพื่อไม่ต้องแก้ import ที่อื่น
 rag_pipeline = RAGPipeline()
+
+
+# ── ต่อสาย Approve → Confidential RAG index (2026-08-07) ───────────────────────────────
+# Timeout สั้นกว่า RAG_WORKER_TIMEOUT_SECONDS มาก (rebuild ดัชนีเอกสารลับไม่กี่ไฟล์ใช้เวลาไม่กี่
+# วินาทีถึงไม่กี่นาที ต่างจาก query ที่รอ Gemini ตอบได้นานถึง 30 นาที) แยก env var ของตัวเองเผื่อ
+# corpus โตขึ้นมากในอนาคตแล้วต้องปรับ
+RAG_WORKER_REBUILD_TIMEOUT_SECONDS = float(
+    os.environ.get("RAG_WORKER_REBUILD_TIMEOUT_SECONDS", "600")
+)
+
+
+def trigger_confidential_index_rebuild() -> dict:
+    """เรียก worker `POST /admin/rebuild_confidential_index` — ใช้จาก
+    `main.py::_archive_and_notify_background()` หลัง Checker approve เอกสารแล้ว **ไม่ raise
+    exception เลยแม้แต่กรณีเดียว** (คืน dict {"success": False, "message": "..."} แทน) เพราะการ
+    index เข้า RAG เป็น "nice to have" เหมือน archive.py (ดู docstring หัวไฟล์นั้น) — ต้องไม่ทำให้
+    ทั้ง flow Approve (PDF สร้างสำเร็จ + อีเมลส่งสำเร็จแล้ว) ถูก mark ว่าล้มเหลวไปด้วยแค่เพราะ worker
+    ปิดอยู่หรือ rebuild ล้มเหลว"""
+    try:
+        resp = httpx.post(
+            f"{RAG_WORKER_BASE_URL}/admin/rebuild_confidential_index",
+            timeout=RAG_WORKER_REBUILD_TIMEOUT_SECONDS,
+        )
+    except httpx.ConnectError as e:
+        return {"success": False, "message": f"เชื่อมต่อ RAG worker ไม่ได้ที่ {RAG_WORKER_BASE_URL}: {e}"}
+    except httpx.TimeoutException as e:
+        return {"success": False, "message": f"RAG worker rebuild ตอบช้าเกิน {RAG_WORKER_REBUILD_TIMEOUT_SECONDS}s: {e}"}
+
+    if resp.status_code >= 400:
+        return {"success": False, "message": f"RAG worker rebuild error ({resp.status_code}): {_safe_detail(resp)}"}
+
+    try:
+        return resp.json()
+    except ValueError:
+        return {"success": False, "message": f"RAG worker rebuild ตอบไม่ใช่ JSON: {resp.text}"}

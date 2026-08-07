@@ -131,6 +131,10 @@ def render_minutes_docx(meeting_id: int, minutes: dict, template_name: str = DEF
         "agenda_items": [
             {
                 "agenda_order": item["agenda_order"],
+                # เลขวาระที่โชว์จริง (2026-08-07 — ดู models.py's MeetingAgendaItem.label
+                # docstring) — fallback เป็น "วาระที่ {ลำดับ+1}" สำหรับ minutes_json เก่าที่สร้างไว้
+                # ก่อนมี field นี้ (ไม่มี "label" key เลยใน dict เก่า) กัน KeyError/โชว์ค่าว่าง
+                "label": item.get("label") or f"วาระที่ {item['agenda_order'] + 1}",
                 "description": item["description"],
                 "discussion_summary": item["discussion_summary"],
                 "resolution_status_label": _RESOLUTION_STATUS_LABELS_TH.get(

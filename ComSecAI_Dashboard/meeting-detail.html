@@ -33,27 +33,40 @@
         <span id="meeting-status-badge" style="vertical-align: super;"></span>
         <div id="meeting-template-label" class="text-muted" style="font-size: 0.85rem;"></div>
       </div>
-      <div style="display: flex; gap: 0.75rem;">
+      <div style="display: flex; gap: 0.75rem; align-items: center;">
         <!-- Re-upload/reprocess — ใหม่ (ไม่มีใน Stitch mockup เดิม) เพิ่มเข้ามาเพราะเดิมไม่มีทางแก้
              ไฟล์เสียง/reprocess ซ้ำได้เลยหลัง status เป็น transcribed แล้ว (dashboard's
              actionCellHtml() มีปุ่ม Re-upload ให้แค่ตอน status="failed" เท่านั้น) — ซ่อนไว้ก่อน
              แสดงเฉพาะตอน transcribed/failed เท่านั้น (คุมผ่าน app.js::loadMeetingDetail กันกดซ้อน
              ระหว่าง processing/uploaded ที่มีงานค้างอยู่แล้ว) -->
+        <!-- เลือกโมเดล Gemini เอง (2026-08-05, ผู้ใช้ขอ — ดู app.js::getModelOptionsHtml()) แสดง/ซ่อน
+             พร้อมกับ reupload-audio-btn เสมอ (คุม display เดียวกันใน app.js) -->
+        <select id="reupload-model-select" title="เลือกโมเดลเจาะจง = ปิดการสลับโมเดลสำรองอัตโนมัติทั้งหมด (ใช้โมเดลนั้นตัวเดียว)" style="font-size: 0.85rem; padding: 0.4rem; display: none;"></select>
         <button id="reupload-audio-btn" class="btn btn-secondary" style="display: none;">Re-upload Audio</button>
         <button id="export-transcript-btn" class="btn btn-secondary">Export Transcript</button>
       </div>
     </div>
 
-    <!-- Read-only Summary -->
+    <!-- Participants/Agenda — แก้ไขย้อนหลังได้ (2026-08-07, ผู้ใช้ขอ — เดิมกรอกได้แค่ตอนสร้างประชุม
+         เท่านั้น meeting ที่ลืมกรอก/ข้ามไปกู้ไม่ได้เลย ต้องสร้างใหม่ทั้งใบ) ปุ่ม Edit สลับ container
+         เป็น input rows ผ่าน renderParticipantsEdit()/renderAgendaEdit() ใน app.js (pattern เดียวกับ
+         Speaker Mapping/Edit Transcript เดิม) ซ่อนปุ่มถ้า approval_status="Approved" แล้ว (ดู
+         backend's _reject_if_approved()) -->
     <div class="panel">
       <div class="grid-2">
         <div>
-          <h4>Participants</h4>
-          <ul id="participants-list" style="color: var(--text-muted); padding-left: 1.2rem;"></ul>
+          <div class="flex-between">
+            <h4>Participants</h4>
+            <button id="edit-participants-btn" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.6rem;">Edit</button>
+          </div>
+          <div id="participants-container"></div>
         </div>
         <div>
-          <h4>Agenda</h4>
-          <ul id="agenda-list" style="color: var(--text-muted); padding-left: 1.2rem;"></ul>
+          <div class="flex-between">
+            <h4>Agenda</h4>
+            <button id="edit-agenda-btn" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.6rem;">Edit</button>
+          </div>
+          <div id="agenda-container"></div>
         </div>
       </div>
     </div>
@@ -86,7 +99,13 @@
       <!-- Transcript Panel -->
       <div class="panel">
         <div class="panel-header flex-between">
-          <h3>Meeting Transcript</h3>
+          <div>
+            <h3 style="margin-bottom: 0.25rem;">Meeting Transcript</h3>
+            <!-- โมเดล Gemini ที่ transcribe สำเร็จจริง (2026-08-05, ผู้ใช้ขอให้บันทึก/แสดงทุกที่ —
+                 ดู backend/models.py's transcription_model_used) ซ่อนเงียบๆถ้าเป็น null (meeting
+                 เก่าก่อนมี field นี้ หรือยังไม่เคย transcribe สำเร็จ) ไม่ error -->
+            <p id="transcript-model-used" class="text-muted" style="font-size: 0.8rem; margin: 0; display: none;"></p>
+          </div>
           <button id="edit-transcript-btn" class="btn btn-secondary">Edit</button>
         </div>
         <div id="transcript-container" style="max-height: 500px; overflow-y: auto; padding-right: 1rem;"></div>
